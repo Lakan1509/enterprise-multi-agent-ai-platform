@@ -1,0 +1,6 @@
+Acme AI Platform Policy
+
+Production deployments require peer review, automated tests, and rollback plans.
+Customer documents must be encrypted in transit and at rest. Access follows the
+principle of least privilege. Critical services target 99.9 percent availability.
+Incident reviews must document root cause, customer impact, and corrective actions.

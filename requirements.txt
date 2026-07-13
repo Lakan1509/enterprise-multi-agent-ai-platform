@@ -1,0 +1,8 @@
+fastapi[standard]>=0.115,<1.0
+langgraph>=0.6,<1.0
+ollama>=0.6,<1.0
+faiss-cpu>=1.11,<2.0
+numpy>=2.0,<3.0
+pydantic-settings>=2.10,<3.0
+pytest>=8.4,<9.0
+httpx>=0.28,<1.0
