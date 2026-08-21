@@ -251,7 +251,7 @@ Docker is optional if you want to run the application in containers.
 Clone the repository:
 
 ```bash
-git clone <repository-url>
+git clone https://github.com/Lakan1509/enterprise-multi-agent-ai-platform.git
 cd enterprise-multi-agent-ai-platform
 ```
 
