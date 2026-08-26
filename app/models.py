@@ -1,5 +1,8 @@
 from typing import Any
+
 from pydantic import BaseModel, Field
+
+from app.evaluation.schemas import EvaluationResult
 
 
 class DocumentInput(BaseModel):
@@ -26,4 +29,5 @@ class QueryResponse(BaseModel):
     plan: list[str]
     citations: list[Citation]
     review: str
-    metadata: dict[str, Any] = {}
+    evaluation: EvaluationResult
+    metadata: dict[str, Any] = Field(default_factory=dict)
