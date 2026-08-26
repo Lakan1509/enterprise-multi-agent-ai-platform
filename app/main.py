@@ -103,6 +103,7 @@ def query(payload: QueryRequest) -> QueryResponse:
         retry_count=result.get("retry_count", 0),
         latency_ms=latency_ms,
         tool_calls=tool_calls,
+        route=route,
     )
 
     return QueryResponse(

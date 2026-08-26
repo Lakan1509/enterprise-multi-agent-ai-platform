@@ -42,3 +42,19 @@ def test_evaluator_requires_non_empty_answer():
     )
 
     assert result.task_success is False
+
+
+def test_direct_route_does_not_require_grounding_review():
+    result = evaluate_run(
+        answer="Hello!",
+        review="",
+        retry_count=0,
+        latency_ms=10.0,
+        tool_calls=0,
+        route="direct",
+    )
+
+    assert result.task_success is True
+    assert result.grounded is True
+    assert result.hallucination_detected is False
+    assert result.retry_count == 0

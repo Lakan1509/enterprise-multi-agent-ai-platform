@@ -4,6 +4,8 @@ from langgraph.checkpoint.memory import InMemorySaver
 from langgraph.graph import END, START, StateGraph
 
 from app.agents.direct import direct_agent
+from app.agents.direct_reviewer import direct_reviewer_agent
+from app.agents.direct_rewriter import direct_rewriter_agent
 from app.agents.planner import planner_agent
 from app.agents.researcher import researcher_agent
 from app.agents.reviewer import finalize_review, reviewer_agent
@@ -83,8 +85,13 @@ def writer_node(state: AgentState) -> AgentState:
 
 
 def reviewer_node(state: AgentState) -> AgentState:
-    return {
-        "review": reviewer_agent(
+    if state.get("route") == "direct":
+        review = direct_reviewer_agent(
+            query=state["query"],
+            draft=state.get("draft", ""),
+        )
+    else:
+        review = reviewer_agent(
             query=state["query"],
             retrieved_context=state.get(
                 "retrieved_context",
@@ -95,6 +102,9 @@ def reviewer_node(state: AgentState) -> AgentState:
                 "",
             ),
         )
+
+    return {
+        "review": review
     }
 
 
@@ -102,12 +112,22 @@ def reviewer_node(state: AgentState) -> AgentState:
 def rewriter_node(state: AgentState) -> AgentState:
     retry_count = state.get("retry_count", 0)
 
-    rewritten = rewriter_agent(
-        query=state["query"],
-        draft=state.get("draft", ""),
-        review=state.get("review", ""),
-        retrieved_context=state.get("retrieved_context", []),
-    )
+    if state.get("route") == "direct":
+        rewritten = direct_rewriter_agent(
+            query=state["query"],
+            draft=state.get("draft", ""),
+            review=state.get("review", ""),
+        )
+    else:
+        rewritten = rewriter_agent(
+            query=state["query"],
+            draft=state.get("draft", ""),
+            review=state.get("review", ""),
+            retrieved_context=state.get(
+                "retrieved_context",
+                [],
+            ),
+        )
 
     return {
         "draft": rewritten,
@@ -184,7 +204,7 @@ def build_graph():
 
     workflow.add_edge(
         "direct",
-        "reviewer",
+        "finalize",
     )
 
     workflow.add_edge(

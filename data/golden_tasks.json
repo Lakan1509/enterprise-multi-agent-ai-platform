@@ -1,0 +1,26 @@
+[
+  {
+    "task_id": "direct-hello",
+    "query": "Say hello.",
+    "expected_route": "direct",
+    "expected_answer_contains": ["hello"],
+    "expected_citations": [],
+    "max_retries": 2
+  },
+  {
+    "task_id": "direct-summary",
+    "query": "Give a short explanation of what an AI agent is.",
+    "expected_route": "direct",
+    "expected_answer_contains": [],
+    "expected_citations": [],
+    "max_retries": 2
+  },
+  {
+    "task_id": "enterprise-policy",
+    "query": "What does the production deployment policy require?",
+    "expected_route": "retrieval",
+    "expected_answer_contains": [],
+    "expected_citations": [],
+    "max_retries": 2
+  }
+]
