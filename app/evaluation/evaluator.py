@@ -11,10 +11,11 @@ def evaluate_run(
     route: str = "retrieval",
 ) -> EvaluationResult:
     """
-    Evaluate a completed agent run using route-aware runtime signals.
+    Evaluate one completed agent run.
 
-    Retrieval responses require grounding review.
-    Direct responses are evaluated without enterprise grounding requirements.
+    Important:
+    Hallucination refers to unsupported content remaining in the FINAL
+    answer, not issues that were detected and corrected during review.
     """
 
     normalized_review = review.strip().upper()
@@ -24,12 +25,31 @@ def evaluate_run(
         grounded = True
         hallucination_detected = False
         task_success = has_answer
+
     else:
-        grounded = normalized_review.startswith("PASS")
-        hallucination_detected = (
-            "UNSUPPORTED" in normalized_review
-            or "HALLUCIN" in normalized_review
+        reviewer_passed = normalized_review.startswith("PASS")
+
+        reviewer_corrected = (
+            normalized_review.startswith("REVISE")
+            and "CORRECTED ANSWER:" in normalized_review
         )
+
+        grounded = reviewer_passed or reviewer_corrected
+
+        # If the reviewer supplied a corrected final answer,
+        # the detected defect belongs to the previous draft.
+        if reviewer_corrected:
+            hallucination_detected = False
+
+        elif reviewer_passed:
+            hallucination_detected = False
+
+        else:
+            hallucination_detected = (
+                "UNSUPPORTED" in normalized_review
+                or "HALLUCIN" in normalized_review
+            )
+
         task_success = has_answer and grounded
 
     return EvaluationResult(

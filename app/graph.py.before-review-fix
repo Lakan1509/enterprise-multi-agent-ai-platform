@@ -138,20 +138,10 @@ def rewriter_node(state: AgentState) -> AgentState:
 def route_after_review(
     state: AgentState,
 ) -> Literal["rewrite", "finalize"]:
-    review = state.get("review", "").strip()
-    normalized = review.upper()
+    review = state.get("review", "").strip().upper()
     retry_count = state.get("retry_count", 0)
 
-    if normalized.startswith("PASS"):
-        return "finalize"
-
-    if (
-        normalized.startswith("REVISE")
-        and "Corrected answer:" in review
-    ):
-        return "finalize"
-
-    if normalized.startswith("REVISE") and retry_count < 2:
+    if review.startswith("REVISE") and retry_count < 2:
         return "rewrite"
 
     return "finalize"

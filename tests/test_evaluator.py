@@ -58,3 +58,47 @@ def test_direct_route_does_not_require_grounding_review():
     assert result.grounded is True
     assert result.hallucination_detected is False
     assert result.retry_count == 0
+
+
+def test_reviewer_corrected_answer_counts_as_grounded():
+    result = evaluate_run(
+        answer="Deployments require approval [policy:0].",
+        review=(
+            "REVISE\n"
+            "Reason: Missing citation.\n"
+            "Corrected answer:\n"
+            "Deployments require approval [policy:0]."
+        ),
+        retry_count=0,
+        latency_ms=100.0,
+        tool_calls=1,
+        route="retrieval",
+    )
+
+    assert result.task_success is True
+    assert result.grounded is True
+    assert result.retry_count == 0
+
+
+def test_corrected_unsupported_draft_is_not_final_hallucination():
+    result = evaluate_run(
+        answer=(
+            "Production deployments require peer review "
+            "[sample-company-policy:0]."
+        ),
+        review=(
+            "REVISE\n"
+            "Reason: Previous draft contained an unsupported claim.\n"
+            "Corrected answer:\n"
+            "Production deployments require peer review "
+            "[sample-company-policy:0]."
+        ),
+        retry_count=0,
+        latency_ms=100.0,
+        tool_calls=1,
+        route="retrieval",
+    )
+
+    assert result.task_success is True
+    assert result.grounded is True
+    assert result.hallucination_detected is False

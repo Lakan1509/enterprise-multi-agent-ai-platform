@@ -43,3 +43,17 @@ def test_missing_review_fails_safely_to_finalize():
     }
 
     assert route_after_review(state) == "finalize"
+
+
+def test_revise_with_corrected_answer_goes_to_finalize():
+    state = {
+        "review": (
+            "REVISE\n"
+            "Reason: Missing citations.\n"
+            "Corrected answer:\n"
+            "Deployments require approval [policy:0]."
+        ),
+        "retry_count": 0,
+    }
+
+    assert route_after_review(state) == "finalize"
