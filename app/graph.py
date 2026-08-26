@@ -7,6 +7,7 @@ from app.agents.direct import direct_agent
 from app.agents.planner import planner_agent
 from app.agents.researcher import researcher_agent
 from app.agents.reviewer import finalize_review, reviewer_agent
+from app.agents.rewriter import rewriter_agent
 from app.agents.supervisor import supervisor_agent
 from app.agents.writer import writer_agent
 from app.tools.registry import tool_registry
@@ -21,6 +22,7 @@ class AgentState(TypedDict, total=False):
     draft: str
     review: str
     answer: str
+    retry_count: int
 
 
 def planner_node(state: AgentState) -> AgentState:
@@ -96,6 +98,35 @@ def reviewer_node(state: AgentState) -> AgentState:
     }
 
 
+
+def rewriter_node(state: AgentState) -> AgentState:
+    retry_count = state.get("retry_count", 0)
+
+    rewritten = rewriter_agent(
+        query=state["query"],
+        draft=state.get("draft", ""),
+        review=state.get("review", ""),
+        retrieved_context=state.get("retrieved_context", []),
+    )
+
+    return {
+        "draft": rewritten,
+        "retry_count": retry_count + 1,
+    }
+
+
+def route_after_review(
+    state: AgentState,
+) -> Literal["rewrite", "finalize"]:
+    review = state.get("review", "").strip().upper()
+    retry_count = state.get("retry_count", 0)
+
+    if review.startswith("REVISE") and retry_count < 2:
+        return "rewrite"
+
+    return "finalize"
+
+
 def finalize_node(state: AgentState) -> AgentState:
     return {
         "answer": finalize_review(
@@ -124,6 +155,7 @@ def build_graph():
     workflow.add_node("researcher", researcher_node)
     workflow.add_node("writer", writer_node)
     workflow.add_node("reviewer", reviewer_node)
+    workflow.add_node("rewriter", rewriter_node)
     workflow.add_node("finalize", finalize_node)
 
     workflow.add_edge(
@@ -165,9 +197,18 @@ def build_graph():
         "reviewer",
     )
 
-    workflow.add_edge(
+    workflow.add_conditional_edges(
         "reviewer",
-        "finalize",
+        route_after_review,
+        {
+            "rewrite": "rewriter",
+            "finalize": "finalize",
+        },
+    )
+
+    workflow.add_edge(
+        "rewriter",
+        "reviewer",
     )
 
     workflow.add_edge(
