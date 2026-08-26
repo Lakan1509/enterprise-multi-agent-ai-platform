@@ -7,7 +7,9 @@ from app.agents.direct import direct_agent
 from app.agents.direct_reviewer import direct_reviewer_agent
 from app.agents.direct_rewriter import direct_rewriter_agent
 from app.agents.planner import planner_agent
+from app.agents.grounded_answer import grounded_answer_agent
 from app.agents.researcher import researcher_agent
+from app.agents.retrieval_router import retrieval_router
 from app.agents.reviewer import finalize_review, reviewer_agent
 from app.agents.rewriter import rewriter_agent
 from app.agents.supervisor import supervisor_agent
@@ -20,6 +22,7 @@ class AgentState(TypedDict, total=False):
     plan: list[str]
     route: str
     retrieved_context: list[dict]
+    retrieval_mode: str
     research_notes: str
     draft: str
     review: str
@@ -47,7 +50,10 @@ def retrieval_node(state: AgentState) -> AgentState:
     )
 
     return {
-        "retrieved_context": results
+        "retrieved_context": results,
+        "retrieval_mode": retrieval_router(
+            state["query"]
+        ),
     }
 
 
@@ -58,6 +64,28 @@ def direct_node(state: AgentState) -> AgentState:
         ),
         "retrieved_context": [],
     }
+
+
+
+def fast_answer_node(state: AgentState) -> AgentState:
+    return {
+        "draft": grounded_answer_agent(
+            query=state["query"],
+            retrieved_context=state.get(
+                "retrieved_context",
+                [],
+            ),
+        )
+    }
+
+
+def route_after_retrieval(
+    state: AgentState,
+) -> Literal["fast", "research"]:
+    if state.get("retrieval_mode") == "research":
+        return "research"
+
+    return "fast"
 
 
 def researcher_node(state: AgentState) -> AgentState:
@@ -182,6 +210,7 @@ def build_graph():
     workflow.add_node("supervisor", supervisor_node)
     workflow.add_node("retrieval", retrieval_node)
     workflow.add_node("direct", direct_node)
+    workflow.add_node("fast_answer", fast_answer_node)
     workflow.add_node("researcher", researcher_node)
     workflow.add_node("writer", writer_node)
     workflow.add_node("reviewer", reviewer_node)
@@ -207,9 +236,18 @@ def build_graph():
         },
     )
 
-    workflow.add_edge(
+    workflow.add_conditional_edges(
         "retrieval",
-        "researcher",
+        route_after_retrieval,
+        {
+            "fast": "fast_answer",
+            "research": "researcher",
+        },
+    )
+
+    workflow.add_edge(
+        "fast_answer",
+        "reviewer",
     )
 
     workflow.add_edge(
