@@ -1,18 +1,20 @@
-from typing import TypedDict
+from typing import Literal, TypedDict
 
 from langgraph.checkpoint.memory import InMemorySaver
 from langgraph.graph import END, START, StateGraph
 
 from app.agents.planner import planner_agent
 from app.agents.researcher import researcher_agent
-from app.agents.retriever import retriever_agent
 from app.agents.reviewer import finalize_review, reviewer_agent
+from app.agents.supervisor import supervisor_agent
 from app.agents.writer import writer_agent
+from app.tools.registry import tool_registry
 
 
 class AgentState(TypedDict, total=False):
     query: str
     plan: list[str]
+    route: str
     retrieved_context: list[dict]
     research_notes: str
     draft: str
@@ -22,17 +24,34 @@ class AgentState(TypedDict, total=False):
 
 def planner_node(state: AgentState) -> AgentState:
     return {
-        "plan": planner_agent(
-            state["query"]
-        )
+        "plan": planner_agent(state["query"])
     }
 
 
-def retriever_node(state: AgentState) -> AgentState:
+def supervisor_node(state: AgentState) -> AgentState:
     return {
-        "retrieved_context": retriever_agent(
-            state["query"]
-        )
+        "route": supervisor_agent(state["query"])
+    }
+
+
+def retrieval_node(state: AgentState) -> AgentState:
+    tool = tool_registry.get("search_knowledge_base")
+
+    results = tool.execute(
+        query=state["query"],
+    )
+
+    return {
+        "retrieved_context": results
+    }
+
+
+def direct_node(state: AgentState) -> AgentState:
+    return {
+        "retrieved_context": [],
+        "research_notes": (
+            "This request does not require enterprise document retrieval."
+        ),
     }
 
 
@@ -85,38 +104,26 @@ def finalize_node(state: AgentState) -> AgentState:
     }
 
 
+def route_from_supervisor(
+    state: AgentState,
+) -> Literal["retrieval", "direct"]:
+    if state.get("route") == "direct":
+        return "direct"
+
+    return "retrieval"
+
+
 def build_graph():
     workflow = StateGraph(AgentState)
 
-    workflow.add_node(
-        "planner",
-        planner_node,
-    )
-
-    workflow.add_node(
-        "retriever",
-        retriever_node,
-    )
-
-    workflow.add_node(
-        "researcher",
-        researcher_node,
-    )
-
-    workflow.add_node(
-        "writer",
-        writer_node,
-    )
-
-    workflow.add_node(
-        "reviewer",
-        reviewer_node,
-    )
-
-    workflow.add_node(
-        "finalize",
-        finalize_node,
-    )
+    workflow.add_node("planner", planner_node)
+    workflow.add_node("supervisor", supervisor_node)
+    workflow.add_node("retrieval", retrieval_node)
+    workflow.add_node("direct", direct_node)
+    workflow.add_node("researcher", researcher_node)
+    workflow.add_node("writer", writer_node)
+    workflow.add_node("reviewer", reviewer_node)
+    workflow.add_node("finalize", finalize_node)
 
     workflow.add_edge(
         START,
@@ -125,12 +132,26 @@ def build_graph():
 
     workflow.add_edge(
         "planner",
-        "retriever",
+        "supervisor",
+    )
+
+    workflow.add_conditional_edges(
+        "supervisor",
+        route_from_supervisor,
+        {
+            "retrieval": "retrieval",
+            "direct": "direct",
+        },
     )
 
     workflow.add_edge(
-        "retriever",
+        "retrieval",
         "researcher",
+    )
+
+    workflow.add_edge(
+        "direct",
+        "writer",
     )
 
     workflow.add_edge(
