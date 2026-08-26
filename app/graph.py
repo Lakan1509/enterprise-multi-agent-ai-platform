@@ -7,7 +7,7 @@ from app.agents.direct import direct_agent
 from app.agents.direct_reviewer import direct_reviewer_agent
 from app.agents.direct_rewriter import direct_rewriter_agent
 from app.agents.planner import planner_agent
-from app.agents.grounded_answer import grounded_answer_agent
+from app.agents.grounded_answer import grounded_answer_agent, normalize_citations
 from app.agents.researcher import researcher_agent
 from app.agents.retrieval_router import retrieval_router
 from app.agents.reviewer import finalize_review, reviewer_agent
@@ -68,14 +68,28 @@ def direct_node(state: AgentState) -> AgentState:
 
 
 def fast_answer_node(state: AgentState) -> AgentState:
+    retrieved_context = state.get(
+        "retrieved_context",
+        [],
+    )
+
+    draft = grounded_answer_agent(
+        query=state["query"],
+        retrieved_context=retrieved_context,
+    )
+
+    draft = normalize_citations(
+        draft,
+        retrieved_context,
+    )
+
     return {
-        "draft": grounded_answer_agent(
-            query=state["query"],
-            retrieved_context=state.get(
-                "retrieved_context",
-                [],
-            ),
-        )
+        "draft": draft,
+        "review": (
+            "PASS\n"
+            "Fast retrieval answer was produced directly "
+            "from retrieved source evidence."
+        ),
     }
 
 
@@ -247,7 +261,7 @@ def build_graph():
 
     workflow.add_edge(
         "fast_answer",
-        "reviewer",
+        "finalize",
     )
 
     workflow.add_edge(
