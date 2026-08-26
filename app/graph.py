@@ -3,6 +3,7 @@ from typing import Literal, TypedDict
 from langgraph.checkpoint.memory import InMemorySaver
 from langgraph.graph import END, START, StateGraph
 
+from app.agents.direct import direct_agent
 from app.agents.planner import planner_agent
 from app.agents.researcher import researcher_agent
 from app.agents.reviewer import finalize_review, reviewer_agent
@@ -48,10 +49,10 @@ def retrieval_node(state: AgentState) -> AgentState:
 
 def direct_node(state: AgentState) -> AgentState:
     return {
-        "retrieved_context": [],
-        "research_notes": (
-            "This request does not require enterprise document retrieval."
+        "draft": direct_agent(
+            state["query"]
         ),
+        "retrieved_context": [],
     }
 
 
@@ -151,7 +152,7 @@ def build_graph():
 
     workflow.add_edge(
         "direct",
-        "writer",
+        "reviewer",
     )
 
     workflow.add_edge(
