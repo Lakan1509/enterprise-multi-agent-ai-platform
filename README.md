@@ -569,7 +569,7 @@ Current limitations include:
 - Local Ollama inference rather than horizontally scaled model serving
 - Simple API-key authentication rather than enterprise OAuth/OIDC
 - In-memory LangGraph checkpointing
-- Limited automated evaluation coverage
+- Evaluation currently uses a small synthetic benchmark rather than a large production evaluation corpus
 - No distributed tracing backend
 - No production Kubernetes deployment
 
@@ -602,7 +602,7 @@ Potential next steps include:
 
 **Enterprise Multi-Agent AI Platform — Python, LangGraph, FastAPI, Ollama, Qwen 2.5, EmbeddingGemma, FAISS, Docker**
 
-Designed and implemented a stateful multi-agent RAG platform using LangGraph with specialized planning, retrieval, research, generation, and review stages. Built semantic document retrieval using EmbeddingGemma embeddings and FAISS vector similarity search, integrated local Qwen 2.5 inference through Ollama, and developed typed FastAPI endpoints with API-key authentication, grounded citations, checkpointing, automated testing, and containerized deployment.
+Designed and implemented a production-style multi-agent RAG platform using LangGraph with specialized planning, retrieval, research, generation, review, and self-correction stages. Built semantic retrieval using EmbeddingGemma and FAISS, local Qwen 2.5 inference through Ollama, typed FastAPI services, API-key authentication, grounded citations, checkpointing, observability tracing, and automated evaluation. Developed an isolated reproducible retrieval benchmark measuring Hit@K, Recall@K, MRR, and latency, with 76 automated tests validating application and evaluation behavior.
 
 ---
 
