@@ -1,0 +1,1 @@
+Machine-learning models must be versioned before production deployment. Evaluation results, known limitations, and approval status must be documented. Production models should be monitored for performance degradation and unexpected behavior. Rollback procedures must exist for model regressions.

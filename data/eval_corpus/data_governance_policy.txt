@@ -1,0 +1,1 @@
+Production datasets must have documented ownership and access controls. Sensitive information must be protected using encryption and least-privilege access. Data quality checks should validate schema, completeness, and expected ranges before information enters machine-learning pipelines.

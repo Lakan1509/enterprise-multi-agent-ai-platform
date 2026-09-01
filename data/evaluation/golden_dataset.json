@@ -1,0 +1,40 @@
+[
+  {
+    "id": "deployment-policy-001",
+    "query": "What controls are required before an AI system can be deployed to production?",
+    "expected_document_id": "deployment-policy-001",
+    "expected_keywords": [
+      "automated testing",
+      "peer code review",
+      "rollback plan",
+      "encryption",
+      "least-privilege",
+      "monitoring",
+      "engineering lead"
+    ]
+  },
+  {
+    "id": "security-policy-001",
+    "query": "What security controls should protect production AI APIs?",
+    "expected_document_id": "security-policy-001",
+    "expected_keywords": [
+      "authentication",
+      "authorization",
+      "api key",
+      "least privilege",
+      "monitoring"
+    ]
+  },
+  {
+    "id": "observability-policy-001",
+    "query": "What observability capabilities are required for production AI services?",
+    "expected_document_id": "observability-policy-001",
+    "expected_keywords": [
+      "metrics",
+      "logging",
+      "tracing",
+      "latency",
+      "errors"
+    ]
+  }
+]

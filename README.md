@@ -206,31 +206,84 @@ This architecture allows the project to demonstrate a complete RAG and agentic A
 
 ## Project Structure
 
-```text
-enterprise-multi-agent-ai-platform/
-├── .github/
-│   └── workflows/
-├── app/
-│   ├── __init__.py
-│   ├── config.py
-│   ├── graph.py
-│   ├── llm.py
-│   ├── main.py
-│   ├── models.py
-│   ├── security.py
-│   └── vector_store.py
-├── data/
-├── tests/
-│   ├── test_api.py
-│   └── test_chunking.py
-├── .env.example
-├── .gitignore
-├── Dockerfile
-├── docker-compose.yml
-├── Makefile
-├── README.md
-└── requirements.txt
-```
+    enterprise-multi-agent-ai-platform/
+    │
+    ├── app/
+    │   ├── agents/
+    │   │   ├── planner.py
+    │   │   ├── retriever.py
+    │   │   ├── researcher.py
+    │   │   ├── writer.py
+    │   │   ├── reviewer.py
+    │   │   ├── rewriter.py
+    │   │   ├── supervisor.py
+    │   │   ├── retrieval_router.py
+    │   │   ├── grounded_answer.py
+    │   │   ├── direct.py
+    │   │   ├── direct_reviewer.py
+    │   │   └── direct_rewriter.py
+    │   │
+    │   ├── evaluation/
+    │   │   ├── cli.py
+    │   │   ├── evaluator.py
+    │   │   ├── golden.py
+    │   │   ├── metrics.py
+    │   │   ├── report.py
+    │   │   ├── retrieval_metrics.py
+    │   │   ├── retrieval_runner.py
+    │   │   ├── runner.py
+    │   │   └── schemas.py
+    │   │
+    │   ├── observability/
+    │   │   └── tracing.py
+    │   │
+    │   ├── services/
+    │   │   └── retrieval_service.py
+    │   │
+    │   ├── tools/
+    │   │   ├── base.py
+    │   │   ├── registry.py
+    │   │   └── retrieval.py
+    │   │
+    │   ├── memory/
+    │   ├── config.py
+    │   ├── graph.py
+    │   ├── llm.py
+    │   ├── main.py
+    │   ├── models.py
+    │   ├── security.py
+    │   └── vector_store.py
+    │
+    ├── data/
+    │   ├── eval_corpus/
+    │   └── evaluation/
+    │       ├── golden_dataset.json
+    │       └── results/
+    │           └── retrieval_benchmark.json
+    │
+    ├── scripts/
+    │   └── run_retrieval_benchmark.py
+    │
+    ├── tests/
+    │   ├── test_api.py
+    │   ├── test_chunking.py
+    │   ├── test_graph_routing.py
+    │   ├── test_retry_routing.py
+    │   ├── test_evaluation_metrics.py
+    │   ├── test_evaluation_runner.py
+    │   ├── test_evaluator.py
+    │   ├── test_query_evaluation.py
+    │   ├── test_observability.py
+    │   ├── test_retrieval_metrics.py
+    │   ├── test_retrieval_runner.py
+    │   ├── test_vector_store_paths.py
+    │   └── additional agent/tool tests
+    │
+    ├── .env.example
+    ├── Dockerfile
+    ├── docker-compose.yml
+    ├── requirements.txt
+    └── README.md
 
 ---
 
@@ -491,6 +544,62 @@ The tests cover API behavior and document chunking functionality.
 
 ---
 
+
+## Evaluation & Benchmarks
+
+The platform includes an automated evaluation layer for measuring retrieval quality, workflow behavior, latency, and execution characteristics.
+
+Retrieval evaluation uses an **isolated FAISS index**, so benchmark runs do not modify the application's primary knowledge base.
+
+### Retrieval Benchmark
+
+A controlled synthetic enterprise-policy benchmark evaluates retrieval across deployment, API security, observability, model governance, and data governance.
+
+| Metric | Result |
+| --- | ---: |
+| Evaluation queries | 5 |
+| Corpus documents | 5 |
+| Hit@4 | **1.000** |
+| Recall@4 | **1.000** |
+| Mean Reciprocal Rank (MRR) | **1.000** |
+| Average retrieval latency | **≈45–50 ms** |
+| Embedding model | EmbeddingGemma |
+| Vector search | FAISS |
+
+All five benchmark queries retrieved the expected document at **rank #1**.
+
+> **Benchmark scope:** Results come from a small controlled synthetic enterprise-policy corpus. They validate the retrieval and evaluation pipeline and should not be interpreted as large-scale production performance results.
+
+### Reproduce the Benchmark
+
+Run:
+
+    PYTHONPATH=. python scripts/run_retrieval_benchmark.py
+
+Results are written to:
+
+    data/evaluation/results/retrieval_benchmark.json
+
+Temporary evaluation indexes are stored under:
+
+    data/evaluation/runtime/
+
+and excluded from version control.
+
+### Automated Testing
+
+Run:
+
+    python -m pytest -q
+
+Current validated test suite:
+
+    76 passed
+
+The suite covers API behavior, document chunking, workflow routing, evaluation metrics, retrieval evaluation, observability, reviewer/retry behavior, and isolated vector-store configuration.
+
+---
+
 ## Docker
 
 Build the Docker image:
@@ -569,7 +678,7 @@ Current limitations include:
 - Local Ollama inference rather than horizontally scaled model serving
 - Simple API-key authentication rather than enterprise OAuth/OIDC
 - In-memory LangGraph checkpointing
-- Limited automated evaluation coverage
+- Evaluation currently uses a small synthetic benchmark rather than a large production evaluation corpus
 - No distributed tracing backend
 - No production Kubernetes deployment
 
@@ -602,7 +711,7 @@ Potential next steps include:
 
 **Enterprise Multi-Agent AI Platform — Python, LangGraph, FastAPI, Ollama, Qwen 2.5, EmbeddingGemma, FAISS, Docker**
 
-Designed and implemented a stateful multi-agent RAG platform using LangGraph with specialized planning, retrieval, research, generation, and review stages. Built semantic document retrieval using EmbeddingGemma embeddings and FAISS vector similarity search, integrated local Qwen 2.5 inference through Ollama, and developed typed FastAPI endpoints with API-key authentication, grounded citations, checkpointing, automated testing, and containerized deployment.
+Designed and implemented a production-style multi-agent RAG platform using LangGraph with specialized planning, retrieval, research, generation, review, and self-correction stages. Built semantic retrieval using EmbeddingGemma and FAISS, local Qwen 2.5 inference through Ollama, typed FastAPI services, API-key authentication, grounded citations, checkpointing, observability tracing, and automated evaluation. Developed an isolated reproducible retrieval benchmark measuring Hit@K, Recall@K, MRR, and latency, with 76 automated tests validating application and evaluation behavior.
 
 ---
 

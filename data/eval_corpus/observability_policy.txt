@@ -1,0 +1,1 @@
+Production AI services must expose metrics for request volume, latency, errors, and resource utilization. Structured application logging is required for operational troubleshooting. Distributed tracing should be available across service boundaries. Alerts must be configured for elevated latency, error rates, and service failures.
