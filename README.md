@@ -206,31 +206,84 @@ This architecture allows the project to demonstrate a complete RAG and agentic A
 
 ## Project Structure
 
-```text
-enterprise-multi-agent-ai-platform/
-├── .github/
-│   └── workflows/
-├── app/
-│   ├── __init__.py
-│   ├── config.py
-│   ├── graph.py
-│   ├── llm.py
-│   ├── main.py
-│   ├── models.py
-│   ├── security.py
-│   └── vector_store.py
-├── data/
-├── tests/
-│   ├── test_api.py
-│   └── test_chunking.py
-├── .env.example
-├── .gitignore
-├── Dockerfile
-├── docker-compose.yml
-├── Makefile
-├── README.md
-└── requirements.txt
-```
+    enterprise-multi-agent-ai-platform/
+    │
+    ├── app/
+    │   ├── agents/
+    │   │   ├── planner.py
+    │   │   ├── retriever.py
+    │   │   ├── researcher.py
+    │   │   ├── writer.py
+    │   │   ├── reviewer.py
+    │   │   ├── rewriter.py
+    │   │   ├── supervisor.py
+    │   │   ├── retrieval_router.py
+    │   │   ├── grounded_answer.py
+    │   │   ├── direct.py
+    │   │   ├── direct_reviewer.py
+    │   │   └── direct_rewriter.py
+    │   │
+    │   ├── evaluation/
+    │   │   ├── cli.py
+    │   │   ├── evaluator.py
+    │   │   ├── golden.py
+    │   │   ├── metrics.py
+    │   │   ├── report.py
+    │   │   ├── retrieval_metrics.py
+    │   │   ├── retrieval_runner.py
+    │   │   ├── runner.py
+    │   │   └── schemas.py
+    │   │
+    │   ├── observability/
+    │   │   └── tracing.py
+    │   │
+    │   ├── services/
+    │   │   └── retrieval_service.py
+    │   │
+    │   ├── tools/
+    │   │   ├── base.py
+    │   │   ├── registry.py
+    │   │   └── retrieval.py
+    │   │
+    │   ├── memory/
+    │   ├── config.py
+    │   ├── graph.py
+    │   ├── llm.py
+    │   ├── main.py
+    │   ├── models.py
+    │   ├── security.py
+    │   └── vector_store.py
+    │
+    ├── data/
+    │   ├── eval_corpus/
+    │   └── evaluation/
+    │       ├── golden_dataset.json
+    │       └── results/
+    │           └── retrieval_benchmark.json
+    │
+    ├── scripts/
+    │   └── run_retrieval_benchmark.py
+    │
+    ├── tests/
+    │   ├── test_api.py
+    │   ├── test_chunking.py
+    │   ├── test_graph_routing.py
+    │   ├── test_retry_routing.py
+    │   ├── test_evaluation_metrics.py
+    │   ├── test_evaluation_runner.py
+    │   ├── test_evaluator.py
+    │   ├── test_query_evaluation.py
+    │   ├── test_observability.py
+    │   ├── test_retrieval_metrics.py
+    │   ├── test_retrieval_runner.py
+    │   ├── test_vector_store_paths.py
+    │   └── additional agent/tool tests
+    │
+    ├── .env.example
+    ├── Dockerfile
+    ├── docker-compose.yml
+    ├── requirements.txt
+    └── README.md
 
 ---
 
