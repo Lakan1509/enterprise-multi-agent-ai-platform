@@ -27,13 +27,20 @@ def chunk_text(text: str, chunk_size: int = 900, overlap: int = 120) -> list[str
 
 
 class FaissStore:
-    def __init__(self) -> None:
+    def __init__(
+        self,
+        index_path: str | Path | None = None,
+        metadata_path: str | Path | None = None,
+    ) -> None:
         settings = get_settings()
-        self.index_path = Path(settings.index_path)
-        self.metadata_path = Path(settings.metadata_path)
+
+        self.index_path = Path(index_path or settings.index_path)
+        self.metadata_path = Path(metadata_path or settings.metadata_path)
+
         self._lock = Lock()
         self.index: faiss.Index | None = None
         self.metadata: list[dict[str, Any]] = []
+
         self._load()
 
     def _load(self) -> None:

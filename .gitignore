@@ -6,3 +6,6 @@ __pycache__/
 data/*.index
 data/metadata.json
 .DS_Store
+
+# Evaluation runtime artifacts
+data/evaluation/runtime/

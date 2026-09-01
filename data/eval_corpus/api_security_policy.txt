@@ -1,0 +1,1 @@
+Production AI APIs must require authentication and authorization. API keys or tokens must be stored securely and rotated regularly. Access should follow least-privilege principles. Requests and authentication failures must be logged and monitored. Rate limiting should be enabled to reduce abuse and protect service availability.
