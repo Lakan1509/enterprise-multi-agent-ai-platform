@@ -491,6 +491,62 @@ The tests cover API behavior and document chunking functionality.
 
 ---
 
+
+## Evaluation & Benchmarks
+
+The platform includes an automated evaluation layer for measuring retrieval quality, workflow behavior, latency, and execution characteristics.
+
+Retrieval evaluation uses an **isolated FAISS index**, so benchmark runs do not modify the application's primary knowledge base.
+
+### Retrieval Benchmark
+
+A controlled synthetic enterprise-policy benchmark evaluates retrieval across deployment, API security, observability, model governance, and data governance.
+
+| Metric | Result |
+| --- | ---: |
+| Evaluation queries | 5 |
+| Corpus documents | 5 |
+| Hit@4 | **1.000** |
+| Recall@4 | **1.000** |
+| Mean Reciprocal Rank (MRR) | **1.000** |
+| Average retrieval latency | **≈45–50 ms** |
+| Embedding model | EmbeddingGemma |
+| Vector search | FAISS |
+
+All five benchmark queries retrieved the expected document at **rank #1**.
+
+> **Benchmark scope:** Results come from a small controlled synthetic enterprise-policy corpus. They validate the retrieval and evaluation pipeline and should not be interpreted as large-scale production performance results.
+
+### Reproduce the Benchmark
+
+Run:
+
+    PYTHONPATH=. python scripts/run_retrieval_benchmark.py
+
+Results are written to:
+
+    data/evaluation/results/retrieval_benchmark.json
+
+Temporary evaluation indexes are stored under:
+
+    data/evaluation/runtime/
+
+and excluded from version control.
+
+### Automated Testing
+
+Run:
+
+    python -m pytest -q
+
+Current validated test suite:
+
+    76 passed
+
+The suite covers API behavior, document chunking, workflow routing, evaluation metrics, retrieval evaluation, observability, reviewer/retry behavior, and isolated vector-store configuration.
+
+---
+
 ## Docker
 
 Build the Docker image:
