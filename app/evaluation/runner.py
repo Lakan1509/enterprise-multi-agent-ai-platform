@@ -6,6 +6,7 @@ from app.evaluation.golden import GoldenTask, GoldenTaskResult
 from app.evaluation.metrics import build_batch_report
 from app.evaluation.report import BatchEvaluationReport
 from app.graph import graph
+from app.observability.tracing import ExecutionTrace
 
 
 class BatchEvaluationRunner:
@@ -21,10 +22,15 @@ class BatchEvaluationRunner:
 
         start_time = perf_counter()
 
+        trace = ExecutionTrace(
+            request_id=thread_id,
+        )
+
         result = graph.invoke(
             {
                 "query": task.query,
                 "retry_count": 0,
+                "trace": trace,
             },
             config={
                 "configurable": {
@@ -41,7 +47,7 @@ class BatchEvaluationRunner:
         retry_count = result.get("retry_count", 0)
         citations = result.get("retrieved_context", [])
 
-        tool_calls = 1 if route == "retrieval" else 0
+        tool_calls = trace.tool_call_count
 
         evaluation = evaluate_run(
             answer=answer,
@@ -49,6 +55,9 @@ class BatchEvaluationRunner:
             retry_count=retry_count,
             latency_ms=latency_ms,
             tool_calls=tool_calls,
+            tool_success_count=trace.tool_success_count,
+            tool_failure_count=trace.tool_failure_count,
+            tool_latency_ms=trace.tool_latency_ms,
             route=route,
         )
 

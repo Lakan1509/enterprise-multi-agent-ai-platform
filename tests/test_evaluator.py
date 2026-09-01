@@ -102,3 +102,22 @@ def test_corrected_unsupported_draft_is_not_final_hallucination():
     assert result.task_success is True
     assert result.grounded is True
     assert result.hallucination_detected is False
+
+
+def test_evaluator_records_tool_observability_metrics():
+    result = evaluate_run(
+        answer="Grounded answer [policy:0].",
+        review="PASS\nThe answer is fully grounded.",
+        retry_count=0,
+        latency_ms=100.0,
+        tool_calls=2,
+        tool_success_count=1,
+        tool_failure_count=1,
+        tool_latency_ms=25.5,
+        route="retrieval",
+    )
+
+    assert result.tool_calls == 2
+    assert result.tool_success_count == 1
+    assert result.tool_failure_count == 1
+    assert result.tool_latency_ms == 25.5

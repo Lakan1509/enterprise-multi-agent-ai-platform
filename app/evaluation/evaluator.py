@@ -8,14 +8,13 @@ def evaluate_run(
     retry_count: int,
     latency_ms: float,
     tool_calls: int,
+    tool_success_count: int = 0,
+    tool_failure_count: int = 0,
+    tool_latency_ms: float = 0.0,
     route: str = "retrieval",
 ) -> EvaluationResult:
     """
-    Evaluate one completed agent run.
-
-    Important:
-    Hallucination refers to unsupported content remaining in the FINAL
-    answer, not issues that were detected and corrected during review.
+    Evaluate one completed agent run using route-aware runtime signals.
     """
 
     normalized_review = review.strip().upper()
@@ -36,14 +35,8 @@ def evaluate_run(
 
         grounded = reviewer_passed or reviewer_corrected
 
-        # If the reviewer supplied a corrected final answer,
-        # the detected defect belongs to the previous draft.
-        if reviewer_corrected:
+        if reviewer_corrected or reviewer_passed:
             hallucination_detected = False
-
-        elif reviewer_passed:
-            hallucination_detected = False
-
         else:
             hallucination_detected = (
                 "UNSUPPORTED" in normalized_review
@@ -59,4 +52,7 @@ def evaluate_run(
         retry_count=retry_count,
         latency_ms=latency_ms,
         tool_calls=tool_calls,
+        tool_success_count=tool_success_count,
+        tool_failure_count=tool_failure_count,
+        tool_latency_ms=tool_latency_ms,
     )

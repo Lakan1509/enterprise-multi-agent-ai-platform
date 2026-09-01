@@ -8,6 +8,7 @@ from app.config import get_settings
 from app.evaluation.evaluator import evaluate_run
 from app.graph import graph
 from app.models import DocumentInput, QueryRequest, QueryResponse
+from app.observability.tracing import ExecutionTrace
 from app.security import verify_api_key
 from app.vector_store import FaissStore
 
@@ -65,10 +66,15 @@ def query(payload: QueryRequest) -> QueryResponse:
     start_time = perf_counter()
 
     try:
+        trace = ExecutionTrace(
+            request_id=thread_id,
+        )
+
         result = graph.invoke(
             {
                 "query": payload.query,
                 "retry_count": 0,
+                "trace": trace,
             },
             config={
                 "configurable": {
@@ -95,7 +101,7 @@ def query(payload: QueryRequest) -> QueryResponse:
         "retrieval",
     )
 
-    tool_calls = 1 if route == "retrieval" else 0
+    tool_calls = trace.tool_call_count
 
     evaluation = evaluate_run(
         answer=result.get("answer", ""),
@@ -103,6 +109,9 @@ def query(payload: QueryRequest) -> QueryResponse:
         retry_count=result.get("retry_count", 0),
         latency_ms=latency_ms,
         tool_calls=tool_calls,
+        tool_success_count=trace.tool_success_count,
+        tool_failure_count=trace.tool_failure_count,
+        tool_latency_ms=trace.tool_latency_ms,
         route=route,
     )
 

@@ -6,30 +6,45 @@ from app.models import QueryRequest
 
 @patch("app.main.graph.invoke")
 def test_query_returns_evaluation_metrics(mock_invoke):
-    mock_invoke.return_value = {
-        "answer": (
-            "Production deployments require approval "
-            "[policy:1]."
-        ),
-        "plan": [
-            "Retrieve policy",
-            "Validate answer",
-        ],
-        "retrieved_context": [
-            {
-                "document_id": "policy",
-                "source": "manual",
-                "chunk_id": 1,
-                "score": 0.95,
-                "text": (
-                    "Production deployments require approval."
-                ),
-            }
-        ],
-        "review": "PASS\nThe answer is fully grounded.",
-        "retry_count": 1,
-        "route": "retrieval",
-    }
+    def fake_invoke(payload, config):
+        trace = payload["trace"]
+
+        from app.observability.tracing import ToolCallTrace
+
+        trace.tool_calls.append(
+            ToolCallTrace(
+                tool_name="search_knowledge_base",
+                success=True,
+                latency_ms=5.0,
+            )
+        )
+
+        return {
+            "answer": (
+                "Production deployments require approval "
+                "[policy:1]."
+            ),
+            "plan": [
+                "Retrieve policy",
+                "Validate answer",
+            ],
+            "retrieved_context": [
+                {
+                    "document_id": "policy",
+                    "source": "manual",
+                    "chunk_id": 1,
+                    "score": 0.95,
+                    "text": (
+                        "Production deployments require approval."
+                    ),
+                }
+            ],
+            "review": "PASS\nThe answer is fully grounded.",
+            "retry_count": 1,
+            "route": "retrieval",
+        }
+
+    mock_invoke.side_effect = fake_invoke
 
     response = query(
         QueryRequest(

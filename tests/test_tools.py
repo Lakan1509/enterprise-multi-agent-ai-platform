@@ -42,3 +42,27 @@ def test_global_registry_contains_knowledge_search():
     tool = tool_registry.get("search_knowledge_base")
 
     assert tool.name == "search_knowledge_base"
+
+
+from app.observability.tracing import ExecutionTrace
+
+
+def test_tool_execute_records_trace():
+    trace = ExecutionTrace(request_id="req-tool")
+
+    tool = Tool(
+        name="calculator",
+        description="Add numbers",
+        handler=lambda a, b: a + b,
+    )
+
+    result = tool.execute(
+        trace=trace,
+        a=4,
+        b=5,
+    )
+
+    assert result == 9
+    assert trace.tool_call_count == 1
+    assert trace.tool_success_count == 1
+    assert trace.tool_calls[0].tool_name == "calculator"

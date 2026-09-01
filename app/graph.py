@@ -1,5 +1,7 @@
 from typing import Literal, TypedDict
 
+from app.observability.tracing import ExecutionTrace
+
 from langgraph.checkpoint.memory import InMemorySaver
 from langgraph.graph import END, START, StateGraph
 
@@ -19,6 +21,7 @@ from app.tools.registry import tool_registry
 
 class AgentState(TypedDict, total=False):
     query: str
+    trace: ExecutionTrace
     plan: list[str]
     route: str
     retrieved_context: list[dict]
@@ -47,6 +50,7 @@ def retrieval_node(state: AgentState) -> AgentState:
 
     results = tool.execute(
         query=state["query"],
+        trace=state.get("trace"),
     )
 
     return {
