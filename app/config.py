@@ -7,7 +7,7 @@ class Settings(BaseSettings):
     app_name: str = "Enterprise Multi-Agent AI Platform"
 
     ollama_host: str = "http://localhost:11434"
-    chat_model: str = "llama3.2"
+    chat_model: str = "qwen2.5:7b"
     embedding_model: str = "embeddinggemma"
 
     api_key: str = ""
