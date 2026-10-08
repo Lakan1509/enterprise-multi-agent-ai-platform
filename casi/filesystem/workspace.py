@@ -12,6 +12,7 @@ path is additionally verified to stay inside the root (symlink-safe).
 
 from __future__ import annotations
 
+import os
 import re
 from collections import Counter
 from dataclasses import dataclass
@@ -87,6 +88,10 @@ class Workspace:
         """Write ``content`` to ``relpath`` (creating parents), versioned.
 
         Keeps the last 10 versions in memory. Returns the new :class:`FileVersion`.
+
+        Files are created world-readable (``0o644``) regardless of the
+        process umask: the sandbox executes targets as an unprivileged uid
+        that must be able to read agent-produced artifacts.
         """
         target = self._resolve(relpath)
         target.parent.mkdir(parents=True, exist_ok=True)
@@ -101,6 +106,8 @@ class Workspace:
         history.append(snapshot)
         del history[: max(0, len(history) - self._MAX_VERSIONS)]
         target.write_text(content, encoding="utf-8")
+        # World-readable: the sandbox runs targets as an unprivileged uid.
+        os.chmod(target, 0o644)
         return snapshot
 
     def read(self, relpath: str) -> str:
