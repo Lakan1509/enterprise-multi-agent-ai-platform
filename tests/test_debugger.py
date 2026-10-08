@@ -1,6 +1,8 @@
 """Tests for casi.agents.debugger repair strategies."""
 
 import json
+import sys
+from pathlib import Path
 from types import SimpleNamespace
 
 from casi.agents.base import AgentContext
@@ -203,3 +205,183 @@ def test_missing_report_fails():
     result = DebuggerAgent().run(ctx)
     assert result.success is False
     assert "test_report" in result.error
+
+
+# --- end-to-end: real broken programs --------------------------------------
+# Each test below runs a genuinely broken program under real pytest (via
+# conftest.ExecSandbox, which truly executes commands without depending on
+# casi.execution.sandbox — another stream's component, mid-rewrite), feeds
+# the *real* failure output to the debugger, and then re-executes the
+# patched program to prove the tests now pass. Nothing is canned.
+
+
+class DirWorkspace:
+    """Workspace fake backed by a real directory on disk."""
+
+    def __init__(self, root):
+        self.root = Path(root)
+        self.writes: list[tuple] = []
+
+    def write(self, relpath, content, author=""):
+        (self.root / relpath).write_text(content, encoding="utf-8")
+        self.writes.append((relpath, author))
+        return relpath
+
+    def read(self, relpath):
+        return (self.root / relpath).read_text(encoding="utf-8")
+
+
+def _real_pytest_report(sandbox, tmp_path, test_file):
+    """Execute pytest for real in the sandbox; build a tester-style report."""
+    from casi.agents.tester import _parse_counts
+
+    result = sandbox.run(
+        [sys.executable, "-m", "pytest", test_file, "-q"],
+        cwd=str(tmp_path),
+        timeout_s=120,
+    )
+    combined = "\n".join(part for part in (result.stdout, result.stderr) if part)
+    passed, failed = _parse_counts(combined)
+    return {
+        "test_file": test_file,
+        "passed": passed,
+        "failed": failed,
+        "returncode": result.returncode,
+        "timed_out": bool(result.timed_out),
+        "stdout_tail": (result.stdout or "")[-2000:],
+    }
+
+
+def _debug_and_rerun(
+    tmp_path, module_file, test_file, module_src, test_src, expected_strategy
+):
+    """Full repair loop against a real broken program; returns patched source."""
+    from conftest import ExecSandbox
+
+    ws = DirWorkspace(tmp_path)
+    ws.write(module_file, module_src, author="test")
+    ws.write(test_file, test_src, author="test")
+    sandbox = ExecSandbox()
+
+    report = _real_pytest_report(sandbox, tmp_path, test_file)
+    assert report["failed"] > 0 and report["returncode"] != 0, (
+        f"test program was not actually broken: {report}"
+    )
+
+    task = SimpleNamespace(
+        id="t4",
+        params={
+            "target_file": module_file,
+            "test_file": test_file,
+            "test_report": report,
+        },
+    )
+    ctx = AgentContext(
+        goal_id="g1",
+        task=task,
+        workspace=ws,
+        memory=FakeMemory(),
+        models=None,
+        sandbox=None,
+        audit=FakeAudit(),
+        approvals=None,
+    )
+    result = DebuggerAgent().run(ctx)
+    assert result.success is True, f"debugger failed: {result.message}"
+    assert result.output["strategy"] == expected_strategy
+
+    patched = ws.read(module_file)
+    rerun = _real_pytest_report(sandbox, tmp_path, test_file)
+    assert rerun["failed"] == 0 and rerun["returncode"] == 0, (
+        f"patched program still fails: {rerun}"
+    )
+    return patched
+
+
+def test_e2e_repairs_inplace_sort_bug(tmp_path):
+    patched = _debug_and_rerun(
+        tmp_path,
+        "sort_list.py",
+        "test_sort_list.py",
+        'def sort_list(lst):\n    """Sort ascending."""\n    return lst.sort()\n',
+        "from sort_list import sort_list\n"
+        "\n"
+        "def test_empty():\n    assert sort_list([]) == []\n"
+        "\n"
+        "def test_reversed():\n    assert sort_list([3, 2, 1]) == [1, 2, 3]\n",
+        "replace-inplace-sort-with-sorted",
+    )
+    assert "return sorted(lst)" in patched
+    assert ".sort()" not in patched
+
+
+def test_e2e_adds_missing_import(tmp_path):
+    patched = _debug_and_rerun(
+        tmp_path,
+        "calc.py",
+        "test_calc.py",
+        "def root(x):\n    return math.sqrt(x)\n",
+        "from calc import root\n"
+        "\n"
+        "def test_root():\n    assert root(16) == 4.0\n",
+        "add-missing-import:math",
+    )
+    assert patched.startswith("import math\n")
+
+
+def test_e2e_fixes_off_by_one_range(tmp_path):
+    patched = _debug_and_rerun(
+        tmp_path,
+        "total.py",
+        "test_total.py",
+        "def total(lst):\n"
+        "    s = 0\n"
+        "    for i in range(len(lst)+1):\n"
+        "        s += lst[i]\n"
+        "    return s\n",
+        "from total import total\n"
+        "\n"
+        "def test_sum():\n    assert total([1, 2, 3]) == 6\n"
+        "\n"
+        "def test_empty():\n    assert total([]) == 0\n",
+        "fix-off-by-one-range-bound",
+    )
+    assert "range(len(lst))" in patched
+    assert "+1" not in patched
+
+
+def test_e2e_fixes_off_by_one_while(tmp_path):
+    patched = _debug_and_rerun(
+        tmp_path,
+        "total2.py",
+        "test_total2.py",
+        "def total2(lst):\n"
+        "    s = 0\n"
+        "    i = 0\n"
+        "    while i <= len(lst):\n"
+        "        s += lst[i]\n"
+        "        i += 1\n"
+        "    return s\n",
+        "from total2 import total2\n"
+        "\n"
+        "def test_sum():\n    assert total2([4, 5]) == 9\n",
+        "fix-off-by-one-while-bound",
+    )
+    assert "while i < len(lst):" in patched
+
+
+def test_e2e_fixes_wrong_return_type(tmp_path):
+    patched = _debug_and_rerun(
+        tmp_path,
+        "adder.py",
+        "test_adder.py",
+        "def add(a, b):\n    return str(a + b)\n",
+        "from adder import add\n"
+        "\n"
+        "def test_add():\n    assert add(2, 3) == 5\n"
+        "\n"
+        "def test_add_type():\n    assert isinstance(add(2, 3), int)\n",
+        "remove-spurious-str-coercion",
+    )
+    assert "return a + b" in patched
+    assert "str(" not in patched

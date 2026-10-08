@@ -123,6 +123,25 @@ def test_implementation_repair_via_memory_flag():
     assert "return sorted(lst)" in ctx.workspace.files["sort_list.py"]
 
 
+def test_implementation_writes_requested_function_and_file():
+    """The coder writes the *requested* artifact: the target file name and
+    function name from params shape what lands in the workspace."""
+    ctx = _ctx(
+        _task(
+            kind="implementation",
+            target_file="fib.py",
+            function_name="fib",
+        )
+    )
+    result = CoderAgent().run(ctx)
+
+    assert result.success is True
+    assert result.output["file"] == "fib.py"
+    code = ctx.workspace.files["fib.py"]
+    assert "def fib(lst):" in code
+    assert ctx.workspace.authors["fib.py"] == "coder"
+
+
 def test_implementation_missing_target_file_fails():
     ctx = _ctx(_task(kind="implementation"))
     result = CoderAgent().run(ctx)
@@ -183,3 +202,15 @@ def test_tests_kind_defaults_function_name():
     result = CoderAgent().run(ctx)
     assert result.success is True
     assert "sort_list" in ctx.workspace.files["test_sort_list.py"]
+
+
+def test_strip_code_fences():
+    from casi.agents.coder import _strip_code_fences
+
+    fenced = "```python\ndef f():\n    return 1\n```\n"
+    assert _strip_code_fences(fenced) == "def f():\n    return 1\n"
+    plain = "def f():\n    return 1\n"
+    assert _strip_code_fences(plain) == plain
+    no_closing = "```\ndef f():\n    return 1\n"
+    assert "def f():" in _strip_code_fences(no_closing)
+    assert "```" not in _strip_code_fences(no_closing)

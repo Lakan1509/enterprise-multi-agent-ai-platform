@@ -1,5 +1,7 @@
 """Tests for casi.planner.decompose_goal."""
 
+import pytest
+
 from casi.planner import Plan, TaskSpec, decompose_goal
 
 SORT_GOAL = "Write a Python function `sort_list` that sorts a list of numbers ascending, and include unit tests."
@@ -77,6 +79,72 @@ def test_fallback_plan_for_generic_goal():
     assert t5.depends_on == ["t4_review"]
     assert t5.approval_required is True
     assert all(t.description.strip() for t in plan.tasks)
+
+
+def test_empty_goal_is_refused():
+    with pytest.raises(ValueError, match="non-empty"):
+        decompose_goal("", "g")
+    with pytest.raises(ValueError, match="non-empty"):
+        decompose_goal("   ", "g")
+
+
+@pytest.mark.parametrize(
+    "goal",
+    [
+        "make it better",
+        "improve it",
+        "fix it",
+        "make it work",
+        "do the thing",
+        "better",
+        "help",
+    ],
+)
+def test_vague_goal_produces_clarifying_plan_not_garbage(goal):
+    plan = decompose_goal(goal, "g")
+    assert len(plan.tasks) == 1
+    task = plan.tasks[0]
+    assert task.id == "t1_clarify"
+    assert task.depends_on == []
+    assert task.params["needs_clarification"] is True
+    questions = task.params["questions"]
+    assert len(questions) >= 2
+    assert all(isinstance(q, str) and q.strip() for q in questions)
+    assert task.description.strip()
+
+
+def test_vague_goal_plan_runs_through_supervisor_asking_for_clarification():
+    """The clarifying plan is safe end to end: the supervisor short-circuits
+    instead of routing to a worker, and the scheduler run succeeds."""
+    from types import SimpleNamespace
+
+    from casi.agents.base import AgentContext
+    from casi.agents.supervisor import SupervisorAgent
+
+    plan = decompose_goal("make it better", "g")
+    ctx = AgentContext(
+        goal_id="g",
+        task=plan.tasks[0],
+        workspace=None,
+        memory=None,
+        models=None,
+        sandbox=None,
+        audit=None,
+        approvals=None,
+    )
+    # no registry configured at all — clarification needs none
+    result = SupervisorAgent().run(ctx)
+    assert result.success is True
+    assert result.output["needs_clarification"] is True
+    assert len(result.output["questions"]) >= 2
+
+
+def test_short_but_concrete_goal_still_gets_real_plan():
+    # "implement quicksort" is short but actionable: software pattern wins
+    # over the vague-goal fallback.
+    plan = decompose_goal("implement quicksort", "g")
+    assert [t.id for t in plan.tasks][0] == "t1_write_impl"
+    assert len(plan.tasks) == 7
 
 
 def test_deterministic_and_model_router_hook_accepted():

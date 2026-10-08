@@ -1,6 +1,7 @@
 """Tests for casi.agents.tester with a fake sandbox."""
 
 import json
+from pathlib import Path
 from types import SimpleNamespace
 
 from casi.agents.base import AgentContext
@@ -110,3 +111,75 @@ def test_missing_test_file_param_fails():
     result = TesterAgent().run(_ctx(task, sandbox))
     assert result.success is False
     assert result.error == "missing test_file"
+
+
+# --- end-to-end truthfulness with real execution -------------------------------
+# Uses conftest.ExecSandbox: commands are genuinely executed (real pytest
+# runs), without depending on casi.execution.sandbox (another stream's
+# component, mid-rewrite for Milestone 2).
+
+
+class DirWorkspace:
+    """Workspace fake backed by a real directory on disk."""
+
+    def __init__(self, root):
+        self.root = Path(root)
+
+    def write(self, relpath, content, author=""):
+        (self.root / relpath).write_text(content, encoding="utf-8")
+        return relpath
+
+    def read(self, relpath):
+        return (self.root / relpath).read_text(encoding="utf-8")
+
+
+def _real_ctx(tmp_path, test_file, role=None):
+    from conftest import ExecSandbox
+
+    # tester resolves the sandbox cwd from workspace.root
+    return AgentContext(
+        goal_id="g1",
+        task=SimpleNamespace(id="t3", params={"test_file": test_file}),
+        workspace=DirWorkspace(tmp_path),
+        memory=None,
+        models=None,
+        sandbox=ExecSandbox(),
+        audit=None,
+        approvals=None,
+        role=role,
+    )
+
+
+def test_end_to_end_truthful_report_with_real_execution(tmp_path):
+    """The tester really executes pytest: a mixed file reports failure with
+    exact counts, a green file reports success. The report on disk matches."""
+    from casi.security.permissions import Role
+
+    (tmp_path / "test_mixed.py").write_text(
+        "def test_ok():\n    assert 1 + 1 == 2\n\n\n"
+        "def test_bad():\n    assert 1 + 1 == 3\n"
+    )
+    (tmp_path / "test_green.py").write_text(
+        "def test_ok():\n    assert 1 + 1 == 2\n"
+    )
+
+    failing = TesterAgent().run(
+        _real_ctx(tmp_path, "test_mixed.py", role=Role.OPERATOR)
+    )
+    assert failing.success is False
+    assert failing.output["passed"] == 1
+    assert failing.output["failed"] == 1
+    assert failing.error is not None
+
+    report = json.loads((tmp_path / REPORT_FILENAME).read_text())
+    assert report["passed"] == 1 and report["failed"] == 1
+    assert report["returncode"] == 1
+    assert "test_bad" in report["stdout_tail"]
+
+    passing = TesterAgent().run(
+        _real_ctx(tmp_path, "test_green.py", role=Role.OPERATOR)
+    )
+    assert passing.success is True
+    assert passing.output["passed"] == 1
+    assert passing.output["failed"] == 0
+    assert passing.error is None

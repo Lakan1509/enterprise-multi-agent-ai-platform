@@ -1,8 +1,15 @@
 """Tests for casi.memory: WorkingMemory, LongTermMemory, MemorySystem."""
 
+import os
+import subprocess
+import sys
+from pathlib import Path
+
 import pytest
 
 from casi.memory import LongTermMemory, MemorySystem, WorkingMemory
+
+_PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
 
 def test_working_memory_set_get() -> None:
@@ -102,6 +109,54 @@ def test_longterm_remember_empty_raises(tmp_path) -> None:
         mem.remember("")
     with pytest.raises(ValueError):
         mem.remember("   ")
+
+
+_CROSS_PROCESS_CHILD = """
+import sys
+from casi.memory import MemorySystem
+
+mode, datadir = sys.argv[1], sys.argv[2]
+ms = MemorySystem(datadir)
+if mode == "write":
+    ms.longterm.remember(
+        "the lighthouse keeper logs the tides nightly", {"source": "run-1"}
+    )
+    print("wrote", flush=True)
+else:
+    hits = ms.longterm.recall("lighthouse keeper tides")
+    print(hits[0]["text"] if hits else "NONE", flush=True)
+    print(hits[0]["metadata"] if hits else "NONE", flush=True)
+"""
+
+
+def test_longterm_persistence_across_processes(tmp_path) -> None:
+    """Write long-term memory in one OS process, recall it from a *new*
+    MemorySystem instance in a *different* OS process. Proves the JSONL
+    backing is the persistence mechanism (no shared file handles)."""
+    env = dict(os.environ, PYTHONPATH=str(_PROJECT_ROOT))
+    data_dir = tmp_path / "data"
+
+    run1 = subprocess.run(
+        [sys.executable, "-c", _CROSS_PROCESS_CHILD, "write", str(data_dir)],
+        capture_output=True,
+        text=True,
+        env=env,
+        timeout=60,
+    )
+    assert run1.returncode == 0, run1.stderr
+    assert "wrote" in run1.stdout
+
+    run2 = subprocess.run(
+        [sys.executable, "-c", _CROSS_PROCESS_CHILD, "read", str(data_dir)],
+        capture_output=True,
+        text=True,
+        env=env,
+        timeout=60,
+    )
+    assert run2.returncode == 0, run2.stderr
+    lines = run2.stdout.splitlines()
+    assert "the lighthouse keeper logs the tides nightly" in lines[0]
+    assert "run-1" in lines[1]
 
 
 def test_memory_system_wiring(tmp_path) -> None:

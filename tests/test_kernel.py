@@ -10,6 +10,7 @@ import pytest
 from casi.config import Settings
 from casi.kernel import AIKernel, GoalNotFound, GoalStateError, GoalStatus
 from casi.scheduler import DAGScheduler
+from casi.security.permissions import Role
 
 
 # ---------------------------------------------------------------------------
@@ -147,7 +148,7 @@ def test_get_goal_unknown_raises(tmp_path):
 def test_run_goal_auto_approve_completes(tmp_path):
     kernel, agent, approvals, audit = make_kernel(tmp_path)
     goal = kernel.create_goal("do something vague and non-software")
-    result = kernel.run_goal(goal.id, auto_approve=True)
+    result = kernel.run_goal(goal.id, auto_approve=True, role=Role.ADMIN)
     assert result.status == GoalStatus.COMPLETED
     assert result.plan is not None
     assert result.report is not None and result.report.success
@@ -174,7 +175,7 @@ def test_run_goal_approval_gate_blocks_without_auto_approve(tmp_path):
 def test_run_goal_failed_task_marks_failed(tmp_path):
     kernel, agent, approvals, audit = make_kernel(tmp_path, agent=FakeAgent(fail=True))
     goal = kernel.create_goal("do something vague and non-software")
-    result = kernel.run_goal(goal.id, auto_approve=True)
+    result = kernel.run_goal(goal.id, auto_approve=True, role=Role.ADMIN)
     assert result.status == GoalStatus.FAILED
     assert result.report is not None and not result.report.success
     assert "goal.failed" in audit.event_names()
@@ -184,9 +185,9 @@ def test_run_goal_failed_task_marks_failed(tmp_path):
 def test_run_goal_requires_runnable_status(tmp_path):
     kernel, _, _, _ = make_kernel(tmp_path)
     goal = kernel.create_goal("do something vague and non-software")
-    kernel.run_goal(goal.id, auto_approve=True)
+    kernel.run_goal(goal.id, auto_approve=True, role=Role.ADMIN)
     with pytest.raises(GoalStateError):
-        kernel.run_goal(goal.id, auto_approve=True)
+        kernel.run_goal(goal.id, auto_approve=True, role=Role.ADMIN)
 
 
 def test_cancel_goal_during_run(tmp_path):
@@ -194,7 +195,7 @@ def test_cancel_goal_during_run(tmp_path):
     kernel, _, _, audit = make_kernel(tmp_path, agent=slow)
     goal = kernel.create_goal("do something vague and non-software")
 
-    thread = threading.Thread(target=kernel.run_goal, args=(goal.id,), kwargs={"auto_approve": True})
+    thread = threading.Thread(target=kernel.run_goal, args=(goal.id,), kwargs={"auto_approve": True, "role": Role.ADMIN})
     thread.start()
     time.sleep(0.3)
     kernel.cancel_goal(goal.id)
@@ -207,7 +208,7 @@ def test_cancel_goal_during_run(tmp_path):
 def test_cancel_terminal_goal_raises(tmp_path):
     kernel, _, _, _ = make_kernel(tmp_path)
     goal = kernel.create_goal("do something vague and non-software")
-    kernel.run_goal(goal.id, auto_approve=True)
+    kernel.run_goal(goal.id, auto_approve=True, role=Role.ADMIN)
     with pytest.raises(GoalStateError):
         kernel.cancel_goal(goal.id)
 
@@ -225,3 +226,44 @@ def test_kernel_importable_without_other_builders(tmp_path):
     kernel = AIKernel(Settings(data_dir=tmp_path / "d2"))
     assert kernel.scheduler is not None
     assert kernel.settings is not None
+
+
+def test_ctx_factory_carries_role(tmp_path):
+    """Kernel wires the run's role onto every AgentContext (D-stream follow-up)."""
+    from casi.planner import TaskSpec
+
+    kernel, _, _, _ = make_kernel(tmp_path)
+    goal = kernel.create_goal("do something vague and non-software")
+    task = TaskSpec(id="t1", name="probe", description="probe",
+                    agent_capability="coder")
+    ctx = kernel._make_ctx_factory(goal, Role.OPERATOR)(task)
+    assert ctx.role == Role.OPERATOR
+
+
+def test_ctx_factory_defaults_to_ungated_legacy(tmp_path):
+    """No role passed -> role=None (legacy ungated contexts, documented)."""
+    from casi.planner import TaskSpec
+
+    kernel, _, _, _ = make_kernel(tmp_path)
+    goal = kernel.create_goal("do something vague and non-software")
+    task = TaskSpec(id="t1", name="probe", description="probe",
+                    agent_capability="coder")
+    ctx = kernel._make_ctx_factory(goal)(task)
+    assert ctx.role is None
+
+
+def test_run_goal_propagates_role_to_agents(tmp_path):
+    """Agents observe the run's role end-to-end via run_goal(role=...)."""
+    seen_roles = []
+
+    class RoleCapturingAgent(FakeAgent):
+        def run(self, ctx):
+            seen_roles.append(ctx.role)
+            return super().run(ctx)
+
+    kernel, _, _, _ = make_kernel(tmp_path, agent=RoleCapturingAgent(artifacts=["sort_list.py"]))
+    goal = kernel.create_goal("do something vague and non-software")
+    result = kernel.run_goal(goal.id, auto_approve=True, role=Role.ADMIN)
+    assert result.status == GoalStatus.COMPLETED
+    assert seen_roles, "no agent ran"
+    assert all(r == Role.ADMIN for r in seen_roles)

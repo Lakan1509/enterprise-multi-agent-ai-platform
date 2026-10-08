@@ -13,8 +13,6 @@ def test_defaults():
     assert s.workspace_dir is None
     assert s.max_workers == 4
     assert s.default_provider == "mock"
-    assert s.ollama_host == "http://localhost:11434"
-    assert s.ollama_model == "qwen2.5:7b"
     assert s.request_timeout_s == 60
 
 

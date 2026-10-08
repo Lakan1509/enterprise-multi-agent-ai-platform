@@ -22,8 +22,13 @@ class FakeWorkspace:
 class FakeMemory:
     def __init__(self, recalls):
         self.store: dict[str, object] = {}
-        self.longterm = SimpleNamespace(recall=lambda q, k=5: recalls)
         self.recall_queries: list[str] = []
+
+        def _recall(query, k=5):
+            self.recall_queries.append(query)
+            return recalls
+
+        self.longterm = SimpleNamespace(recall=_recall)
 
     def set(self, key, value):
         self.store[key] = value
@@ -105,6 +110,20 @@ def test_memory_without_longterm_is_tolerated():
     assert len(result.output["findings"]) == 1
     assert result.output["findings"][0]["source"] == "workspace"
     assert ctx.memory.store["research:t0"] == result.output["findings"]
+
+
+def test_query_is_forwarded_to_both_sources():
+    """Findings are grounded: the task's query string is what gets searched
+    and recalled — the researcher never invents findings."""
+    ws = FakeWorkspace([{"path": "a.md", "name": "a.md"}])
+    mem = FakeMemory([{"text": "a fact"}])
+    task = SimpleNamespace(id="t0", params={"query": "sorting algorithms"})
+    ctx = _ctx(task, ws, mem)
+
+    ResearcherAgent().run(ctx)
+
+    assert ws.queries == ["sorting algorithms"]
+    assert mem.recall_queries == ["sorting algorithms"]
 
 
 def test_empty_results_still_succeed():
