@@ -18,6 +18,11 @@ class Capability(str, Enum):
     NETWORK = "NETWORK"
     APPROVE_PUBLISH = "APPROVE_PUBLISH"
     MANAGE_PLUGINS = "MANAGE_PLUGINS"
+    APPROVE_OWN_RUNS = "APPROVE_OWN_RUNS"
+    """Auto-approve a goal run's approval gate. ADMIN-only by design."""
+
+    MANAGE_GOALS = "MANAGE_GOALS"
+    """Create, run, and cancel goals via the API."""
 
 
 class Role(str, Enum):
@@ -35,10 +40,16 @@ ROLE_CAPABILITIES: dict[Role, set[Capability]] = {
         Capability.READ_WORKSPACE,
         Capability.WRITE_WORKSPACE,
         Capability.NETWORK,
+        Capability.MANAGE_GOALS,
     },
     Role.VIEWER: {Capability.READ_WORKSPACE},
 }
-"""Capabilities granted to each role. Unknown roles grant nothing."""
+"""Capabilities granted to each role. Unknown roles grant nothing.
+
+``APPROVE_OWN_RUNS`` is granted only to :data:`Role.ADMIN` — it lets an
+actor auto-approve a run's approval gate, so it must never leak to
+operators or viewers.
+"""
 
 
 def check(role: Role, capability: Capability) -> None:
