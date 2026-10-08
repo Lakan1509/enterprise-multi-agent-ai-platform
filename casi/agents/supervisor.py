@@ -3,6 +3,13 @@
 The supervisor does no work itself; it resolves ``task.agent_capability``
 against an ``AgentRegistry`` and reports which agent was chosen. The kernel
 (or scheduler) then runs the chosen agent.
+
+One exception: a task carrying ``params["needs_clarification"]`` (emitted by
+``casi.planner.decompose_goal`` for vague goals) is *not* routed — the
+supervisor returns it immediately with ``output["needs_clarification"]``
+set, so the run surfaces clarifying questions to the user instead of
+executing a garbage plan. This path needs no registry and performs no
+side effects, so it is not permission-gated.
 """
 
 from __future__ import annotations
@@ -44,7 +51,25 @@ class SupervisorAgent(Agent):
             ) from exc
 
     def run(self, ctx: AgentContext) -> AgentResult:
-        """Assign ``ctx.task`` and report the chosen agent."""
+        """Assign ``ctx.task`` and report the chosen agent.
+
+        Tasks flagged ``params["needs_clarification"]`` short-circuit: no
+        routing happens, and the clarifying questions are returned so the
+        caller can ask the user instead of running a garbage plan.
+        """
+        params = getattr(ctx.task, "params", None) or {}
+        if isinstance(params, dict) and params.get("needs_clarification"):
+            questions = params.get("questions", [])
+            return AgentResult(
+                success=True,
+                output={
+                    "needs_clarification": True,
+                    "questions": list(questions),
+                    "goal_hint": params.get("goal_hint", ""),
+                },
+                artifacts=[],
+                message="goal too vague to plan: clarification requested",
+            )
         if self._registry is None:
             return AgentResult(
                 success=False,
