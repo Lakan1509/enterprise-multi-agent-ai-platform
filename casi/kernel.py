@@ -26,6 +26,7 @@ from typing import Any
 from casi.config import Settings
 from casi.planner import Plan, TaskSpec, decompose_goal
 from casi.scheduler import DAGScheduler, RunReport
+from casi.security.permissions import Capability, PermissionDenied, Role, check
 
 
 class GoalStatus(str, Enum):
@@ -98,18 +99,22 @@ class AIKernel:
         self.memory = memory_cls(self.settings.data_dir) if memory_cls else None
 
         router_cls = _try_import("casi.models.providers", "ModelRouter")
+        build_router = _try_import("casi.models.providers", "build_default_router")
         mock_cls = _try_import("casi.models.providers", "MockProvider")
         self.models = None
         if router_cls is not None:
             try:
-                providers: dict[str, Any] = {}
-                if mock_cls is not None:
+                if build_router is not None:
+                    # Registers mock + ollama + nebius; the default comes from
+                    # CASI_DEFAULT_PROVIDER (mock|ollama|nebius). Providers
+                    # are lazy: constructing them performs no network I/O.
+                    self.models = build_router()
+                elif mock_cls is not None:
                     mock = mock_cls()
-                    providers[getattr(mock, "name", "mock")] = mock
-                default = self.settings.default_provider or "mock"
-                if default not in providers and providers:
-                    default = next(iter(providers))
-                self.models = router_cls(providers=providers, default=default) if providers else None
+                    self.models = router_cls(
+                        providers={getattr(mock, "name", "mock"): mock},
+                        default="mock",
+                    )
             except Exception:  # noqa: BLE001 - router construction must not break the kernel
                 self.models = None
 
@@ -129,7 +134,18 @@ class AIKernel:
         self.scheduler = DAGScheduler(self.registry, self.audit, max_workers=self.settings.max_workers)
 
         approvals_cls = _try_import("casi.security.approvals", "ApprovalGate")
-        self.approvals = approvals_cls() if approvals_cls else None
+        if approvals_cls is not None:
+            def _gate_audit_hook(event: str, details: dict) -> None:
+                if self.audit is not None:
+                    self.audit.record(
+                        event,
+                        goal_id=str(details.get("goal_id", "") or ""),
+                        details=details,
+                    )
+
+            self.approvals = approvals_cls(audit_hook=_gate_audit_hook)
+        else:
+            self.approvals = None
 
         self._goals: dict[str, Goal] = {}
         self._cancel_events: dict[str, threading.Event] = {}
@@ -175,8 +191,66 @@ class AIKernel:
         goal.status = status
         self._audit(event, goal, details)
 
-    def _make_ctx_factory(self, goal: Goal):
-        """Build ``ctx_factory(task)`` wiring all components into a context."""
+    # -- approval-gate integrity --------------------------------------------
+
+    def _require_auto_approve(self, goal_id: str, role: Role | None) -> Role:
+        """Authorize the auto-approve path. Fails closed.
+
+        Auto-approve is never a silent default: it requires an explicit
+        ``auto_approve=True`` from the caller **and** an acting role that
+        holds :data:`Capability.APPROVE_OWN_RUNS` (ADMIN only).
+
+        Raises:
+            PermissionDenied: If ``role`` is missing or lacks the
+                capability. A denied attempt is audited as
+                ``approval.bypass_denied`` before the exception propagates.
+        """
+        actor = role.value if isinstance(role, Role) else "unknown"
+        try:
+            if role is None:
+                raise PermissionDenied(
+                    "auto_approve requires an explicit acting role with "
+                    "APPROVE_OWN_RUNS; refusing to auto-approve with no role"
+                )
+            check(role, Capability.APPROVE_OWN_RUNS)
+        except PermissionDenied as exc:
+            if self.audit is not None:
+                self.audit.record(
+                    "approval.bypass_denied",
+                    goal_id=goal_id,
+                    actor=actor,
+                    details={"reason": str(exc)},
+                )
+            raise
+        return role
+
+    def _auto_resolve_approval(self, goal: Goal, approval: Any, role: Role) -> Any:
+        """Resolve ``approval`` as approved on the authorized auto-approve path.
+
+        Re-checks ``APPROVE_OWN_RUNS`` (defense in depth) and writes the
+        mandatory ``approval.auto_approved`` audit record with the approval
+        id, action name, and actor role.
+        """
+        authorized = self._require_auto_approve(goal.id, role)
+        resolved = self._require("approvals").resolve(approval.id, True, note="auto-approved")
+        self._audit(
+            "approval.auto_approved",
+            goal,
+            {
+                "approval_id": resolved.id,
+                "action": resolved.action,
+                "actor_role": authorized.value,
+            },
+        )
+        return resolved
+
+    def _make_ctx_factory(self, goal: Goal, role: Role | None = None):
+        """Build ``ctx_factory(task)`` wiring all components into a context.
+
+        ``role`` is the acting role for this run; it is carried on every
+        :class:`AgentContext` so agent side-effecting actions are
+        capability-gated (``None`` = legacy ungated contexts).
+        """
         agent_context_cls = _try_import("casi.agents.base", "AgentContext")
 
         def factory(task: TaskSpec):
@@ -189,6 +263,7 @@ class AIKernel:
                 "sandbox": self.sandbox,
                 "audit": self.audit,
                 "approvals": self.approvals,
+                "role": role,
             }
             if agent_context_cls is not None:
                 return agent_context_cls(**kwargs)
@@ -224,13 +299,29 @@ class AIKernel:
         """Return all goals in creation order."""
         return list(self._goals.values())
 
-    def run_goal(self, goal_id: str, auto_approve: bool = False) -> Goal:
+    def run_goal(self, goal_id: str, auto_approve: bool = False, role: Role | None = None) -> Goal:
         """Run a goal end-to-end: plan → schedule → verify → approval gate.
+
+        Args:
+            goal_id: The goal to run.
+            auto_approve: When ``True``, the publish approval gate is
+                resolved automatically. This is never a silent default: it
+                must be passed explicitly by the caller **and** ``role``
+                must hold :data:`Capability.APPROVE_OWN_RUNS` (ADMIN only),
+                otherwise :class:`PermissionDenied` is raised and the
+                attempt is audited as ``approval.bypass_denied``. There is
+                no configuration knob that can enable auto-approve.
+            role: The acting role for this run; gates the auto-approve path.
 
         Any exception during the run marks the goal ``FAILED`` (with an audit
         entry) and the goal is returned. Cancellation via
-        :meth:`cancel_goal` marks remaining work cancelled.
+        :meth:`cancel_goal` marks remaining work cancelled. A denied
+        auto-approve raises :class:`PermissionDenied` before any work starts.
         """
+        # Authorize the auto-approve path up front so a denied attempt fails
+        # fast, before any planning/execution work, and is always audited.
+        actor_role = self._require_auto_approve(goal_id, role) if auto_approve else None
+
         goal = self.get_goal(goal_id)
         if goal.status not in (GoalStatus.CREATED, GoalStatus.FAILED):
             raise GoalStateError(f"cannot run goal in status {goal.status.value!r}")
@@ -254,7 +345,7 @@ class AIKernel:
             checkpoint_path = self.settings.runs_dir / goal.id / "checkpoint.json"
             report = self.scheduler.run(
                 goal.plan,
-                self._make_ctx_factory(goal),
+                self._make_ctx_factory(goal, role),
                 cancel_event=cancel_event,
                 checkpoint_path=checkpoint_path,
             )
@@ -308,7 +399,8 @@ class AIKernel:
                     {"approval_id": approval.id},
                 )
                 if auto_approve:
-                    approval = self.approvals.resolve(approval.id, True, note="auto-approved")
+                    assert actor_role is not None  # authorized at run start
+                    approval = self._auto_resolve_approval(goal, approval, actor_role)
                 else:
                     approval = self.approvals.wait(approval.id)
                 if approval.status == "approved":

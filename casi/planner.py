@@ -5,6 +5,13 @@
 keyword/pattern driven — genuine, inspectable logic — not random. The
 ``model_router`` parameter is a documented hook for future LLM-assisted
 decomposition; it is currently unused.
+
+Vague goals (e.g. ``"make it better"``) never produce a garbage DAG: they
+yield a single-task *clarifying plan* whose task carries
+``params["needs_clarification"]``. The supervisor agent short-circuits such
+tasks — no routing, no side effects — and returns the clarifying questions
+so the caller can ask the user. Empty/blank goals are refused outright with
+``ValueError``.
 """
 
 from __future__ import annotations
@@ -86,6 +93,68 @@ def _is_software_goal(goal_text: str) -> bool:
         "script",
     )
     return any(t in lowered for t in triggers) or bool(_FUNC_NAME_RE.search(goal_text))
+
+
+# ---------------------------------------------------------------------------
+# Vague-goal handling
+# ---------------------------------------------------------------------------
+
+#: Phrases that carry no actionable target on their own.
+_VAGUE_PATTERNS = (
+    re.compile(r"\bmake it better\b"),
+    re.compile(r"\bimprove (it|this|that)\b"),
+    re.compile(r"\bfix (it|this|that)\b"),
+    re.compile(r"\bmake it work\b"),
+    re.compile(r"\bdo (it|the thing)\b"),
+    re.compile(r"\bhandle it\b"),
+)
+
+#: Questions surfaced to the user when a goal is too vague to plan.
+CLARIFYING_QUESTIONS = (
+    "What specifically should change? (Which files, features, or behaviors?)",
+    "What does 'done' look like — how will we verify the result?",
+    "Are there constraints I should respect (scope, style, deadlines)?",
+)
+
+
+def _is_vague_goal(goal_text: str) -> bool:
+    """Heuristic: the goal is too underspecified to plan safely.
+
+    A goal is vague when it has fewer than three words (nothing to anchor a
+    plan to) or matches a known content-free phrase such as "make it
+    better". Runs *after* the software-goal check, so short but concrete
+    goals like "implement quicksort" still get a real plan.
+    """
+    lowered = goal_text.strip().lower()
+    if len(lowered.split()) < 3:
+        return True
+    return any(p.search(lowered) for p in _VAGUE_PATTERNS)
+
+
+def _clarifying_plan(goal_id: str, goal_text: str) -> Plan:
+    """A safe single-task plan that asks the user for specifics.
+
+    The task's ``agent_capability`` is ``"supervise"`` so the supervisor
+    agent picks it up; the supervisor short-circuits
+    ``params["needs_clarification"]`` tasks (no routing, no side effects)
+    and returns the clarifying questions. The scheduler treats the run as
+    successful — the "work" was asking, not guessing.
+    """
+    task = TaskSpec(
+        id="t1_clarify",
+        name="Request clarification",
+        description=(
+            f"The goal {goal_text.strip()!r} is too vague to plan safely. "
+            "Ask the user for the specifics below instead of guessing."
+        ),
+        agent_capability="supervise",
+        params={
+            "needs_clarification": True,
+            "questions": list(CLARIFYING_QUESTIONS),
+            "goal_hint": goal_text.strip(),
+        },
+    )
+    return Plan(goal_id=goal_id, goal_text=goal_text, tasks=[task])
 
 
 # ---------------------------------------------------------------------------
@@ -254,10 +323,13 @@ def decompose_goal(goal_text: str, goal_id: str, model_router: Any = None) -> Pl
     """Decompose a goal into a DAG of tasks.
 
     Dispatches on keyword/pattern rules:
+      - empty/blank goals → ``ValueError`` (clear refusal; the kernel's
+        ``create_goal`` already enforces this, this is defense in depth);
       - software goals (function/class mentions, "write"/"implement" verbs)
-        mentioning tests → the 7-task implement→test→repair→verify→approve DAG;
-      - software goals without a test mention → same DAG (tests are added by
-        the planner as good practice);
+        → the 7-task implement→test→repair→verify→approve DAG;
+      - vague goals (fewer than three words, or content-free phrases like
+        "make it better") → a single-task clarifying plan; never a garbage
+        DAG;
       - anything else → the generic 5-task research→plan→execute→review→approve pipeline.
 
     Args:
@@ -268,8 +340,17 @@ def decompose_goal(goal_text: str, goal_id: str, model_router: Any = None) -> Pl
 
     Returns:
         A ``Plan`` whose task ids are unique and descriptions non-empty.
+
+    Raises:
+        ValueError: If ``goal_text`` is empty or blank.
     """
     _ = model_router  # documented hook; rule-based for now
+    if not goal_text or not goal_text.strip():
+        raise ValueError(
+            "goal text must be non-empty: refusing to build a plan from an empty goal"
+        )
     if _is_software_goal(goal_text):
         return _software_plan(goal_id, goal_text)
+    if _is_vague_goal(goal_text):
+        return _clarifying_plan(goal_id, goal_text)
     return _fallback_plan(goal_id, goal_text)
