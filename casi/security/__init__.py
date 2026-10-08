@@ -1,6 +1,12 @@
 """CASI security: capabilities, approval gates, audit log, and API-key auth."""
 
-from .approvals import Approval, ApprovalGate, ApprovalNotFound, ApprovalTimeout
+from .approvals import (
+    Approval,
+    ApprovalGate,
+    ApprovalNotFound,
+    ApprovalTimeout,
+    AuditHook,
+)
 from .audit import AuditLog
 from .auth import verify_api_key
 from .permissions import (
@@ -16,6 +22,7 @@ __all__ = [
     "ApprovalGate",
     "ApprovalNotFound",
     "ApprovalTimeout",
+    "AuditHook",
     "AuditLog",
     "Capability",
     "PermissionDenied",
