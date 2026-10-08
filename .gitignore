@@ -9,3 +9,11 @@ data/metadata.json
 
 # Evaluation runtime artifacts
 data/evaluation/runtime/
+# --- CASI (AI OS milestone 1) ---
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.casi-data/
+.env
+*.egg-info/
