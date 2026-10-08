@@ -1,0 +1,15 @@
+[smoke] provider=ollama host=http://127.0.0.1:11434 model=qwen2.5:0.5b
+[smoke] GET /api/tags -> 1 model(s): ['qwen2.5:0.5b']
+[smoke] OllamaProvider.complete (8.1s) ->
+----- model output (direct) -----
+SMOKE-OK
+---------------------------------
+[smoke] tokens: prompt=32 completion=6
+[smoke] ModelRouter available providers: ['mock', 'nebius', 'ollama']
+[smoke] ModelRouter.complete (0.9s) ->
+----- model output (routed) -----
+SMOKE-OK
+---------------------------------
+[smoke] tokens: prompt=32 completion=6
+[smoke] CostTracker summary: total_tokens=76 total_cost=$0.000000 (local Ollama inference is free; cost_per_1k=0.0) by_provider={'ollama': 76}
+[smoke] DONE in 9.1s — all output above came from live Ollama calls.
