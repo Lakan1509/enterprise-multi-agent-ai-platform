@@ -1,5 +1,5 @@
-"""Execution package: sandboxed subprocess/Docker code execution."""
+"""Execution package: namespace-isolated sandboxed code execution."""
 
-from casi.execution.sandbox import ExecResult, Sandbox, SecurityError
+from casi.execution.sandbox import ExecResult, Sandbox, SandboxUnavailable, SecurityError
 
-__all__ = ["ExecResult", "Sandbox", "SecurityError"]
+__all__ = ["ExecResult", "Sandbox", "SandboxUnavailable", "SecurityError"]
