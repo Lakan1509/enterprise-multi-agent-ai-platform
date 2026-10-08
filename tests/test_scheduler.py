@@ -1,9 +1,13 @@
 """Tests for casi.scheduler.DAGScheduler using fake registries/agents."""
 
 import json
+import os
+import subprocess
+import sys
 import threading
 import time
 from dataclasses import dataclass, field
+from pathlib import Path
 
 import pytest
 
@@ -244,6 +248,107 @@ def test_checkpoint_mismatch_starts_over(tmp_path):
     report = _sched({"coder": agent}).run(_plan([_t("a")]), lambda task: None, checkpoint_path=ckpt)
     assert report.success
     assert agent.calls == 1
+
+
+def test_partial_failure_dependents_skip_independents_continue():
+    # Diamond: a fails -> b (dep a) skips; c (independent) still runs ok;
+    # d (deps b, c) skips because b never went ok.
+    plan = _plan([
+        _t("a", cap="a"),
+        _t("b", cap="b", deps=["a"]),
+        _t("c", cap="c"),
+        _t("d", cap="d", deps=["b", "c"]),
+    ])
+    agents = {
+        "a": FakeAgent(fail_times=99),
+        "b": FakeAgent(),
+        "c": FakeAgent(),
+        "d": FakeAgent(),
+    }
+    report = _sched(agents).run(plan, lambda task: None)
+    by_id = {o.task_id: o for o in report.outcomes}
+    assert by_id["a"].status == "failed"
+    assert by_id["b"].status == "skipped"
+    assert by_id["b"].attempts == 0
+    assert by_id["c"].status == "ok"
+    assert by_id["d"].status == "skipped"
+    assert agents["b"].calls == 0
+    assert agents["c"].calls == 1
+    assert agents["d"].calls == 0
+    assert report.success is False
+
+
+def test_same_level_tasks_unaffected_by_sibling_failure():
+    # A failure does not abort the rest of its level: y runs even though
+    # x (same level) failed.
+    plan = _plan([_t("x", cap="x"), _t("y", cap="y")])
+    agents = {"x": FakeAgent(fail_times=99), "y": FakeAgent()}
+    report = _sched(agents).run(plan, lambda task: None)
+    by_id = {o.task_id: o for o in report.outcomes}
+    assert by_id["x"].status == "failed"
+    assert by_id["y"].status == "ok"
+    assert report.success is False
+
+
+def test_crash_mid_dag_resumes_without_rerunning_completed(tmp_path):
+    """A run killed mid-DAG resumes from the checkpoint: completed tasks are
+    not re-executed. The child process is SIGKILLed while task b runs; the
+    parent then resumes from the child's checkpoint file."""
+    child = Path(__file__).parent / "_sched_crash_child.py"
+    ckpt = tmp_path / "checkpoint.json"
+    env = dict(os.environ, PYTHONPATH=str(Path(__file__).parent.parent))
+    proc = subprocess.Popen(
+        [sys.executable, str(child), str(tmp_path), str(ckpt)],
+        env=env,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+    try:
+        deadline = time.time() + 60
+        while time.time() < deadline:
+            if proc.poll() is not None:
+                pytest.fail(f"child exited early with code {proc.returncode}")
+            if ckpt.exists():
+                try:
+                    payload = json.loads(ckpt.read_text())
+                except ValueError:
+                    payload = {}
+                statuses = {
+                    o["task_id"]: o["status"]
+                    for o in payload.get("outcomes", [])
+                }
+                if statuses.get("a") == "ok":
+                    break  # checkpointed after level 1; task b now running
+            time.sleep(0.2)
+        else:
+            pytest.fail("child never checkpointed task a")
+        # Interrupt mid-DAG: task b is still running in the child.
+        proc.kill()
+        proc.wait(timeout=15)
+    finally:
+        if proc.poll() is None:
+            proc.kill()
+            proc.wait(timeout=15)
+
+    runs = (tmp_path / "runs.txt").read_text().split()
+    assert runs == ["a"], runs  # a ran once; b never finished
+
+    # Resume in a fresh scheduler: task a must NOT re-run.
+    agent_a = FakeAgent()
+    agent_b = FakeAgent()
+    plan = _plan([_t("a", cap="a"), _t("b", cap="b", deps=["a"])])
+    sched = DAGScheduler(
+        FakeRegistry({"a": agent_a, "b": agent_b}), FakeAudit()
+    )
+    report = sched.run(plan, lambda task: None, checkpoint_path=ckpt)
+    assert report.success is True
+    assert agent_a.calls == 0, "completed task a was re-executed on resume"
+    assert agent_b.calls == 1
+    by_id = {o.task_id: o for o in report.outcomes}
+    assert by_id["a"].status == "ok"
+    assert by_id["b"].status == "ok"
+    # runs.txt untouched: a truly ran exactly once across both processes
+    assert (tmp_path / "runs.txt").read_text().split() == ["a"]
 
 
 def test_cancellation_marks_remaining_cancelled():
