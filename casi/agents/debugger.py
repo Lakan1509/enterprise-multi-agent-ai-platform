@@ -8,14 +8,29 @@ Repair strategies are rule-based and applied in order; the first match wins:
    on its first pass).
 2. ``NameError: name 'X' is not defined`` where ``X`` is a stdlib module in
    a small allowlist -> prepend ``import X``.
-3. Fallback: no applicable strategy — record ``repair:requested`` in working
+3. Off-by-one loop bound plus an ``IndexError`` in the failure output:
+   ``range(len(X) + 1)`` -> ``range(len(X))``, and
+   ``while i <= len(X):`` -> ``while i < len(X):``.
+4. Wrong return type: ``return str(<expr>)`` plus an ``AssertionError`` in
+   the failure output -> drop the spurious coercion, ``return <expr>``.
+5. Fallback: no applicable strategy — record ``repair:requested`` in working
    memory and return ``success=False`` with an honest error so the scheduler
    can retry or fail the goal. Nothing is faked to pass.
+
+Every strategy is verified end-to-end in ``tests/test_debugger.py`` against
+a *real* broken program: pytest is genuinely executed, the real failure
+output is fed to the debugger, and the patched file is re-executed to prove
+the tests now pass.
 
 The patched file is written back through the workspace (creating a new
 version), and the strategy name is recorded in the audit log and in working
 memory under ``f"repair:{target_file}"`` (and ``f"repair:{task.id}"``) so the
 coder/tests can see that a repair happened.
+
+Permission gating: reading the target file requires ``READ_WORKSPACE`` and
+writing the patch requires ``WRITE_WORKSPACE`` (via
+:func:`casi.agents.base.require_capability`); both fail closed with
+``PermissionDenied``.
 """
 
 from __future__ import annotations
@@ -24,13 +39,20 @@ import json
 import re
 from typing import Any
 
-from casi.agents.base import Agent, AgentContext, AgentResult
+from casi.agents.base import Agent, AgentContext, AgentResult, require_capability
 
 # Strategy 1: the coder's first-pass bug — list.sort() returns None.
 _INPLACE_SORT_RE = re.compile(r"return\s+(\w[\w.]*)\.sort\(\)")
 # Strategy 2: missing stdlib import.
 _NAME_ERROR_RE = re.compile(r"NameError:\s*name\s+'(\w+)'\s+is\s+not\s+defined")
 _IMPORT_LINE_RE_TEMPLATE = r"^\s*(?:import\s+{name}\b|from\s+{name}\b)"
+# Strategy 3: off-by-one loop bounds.
+_OFF_BY_ONE_RANGE_RE = re.compile(r"range\(\s*len\(\s*([A-Za-z_]\w*)\s*\)\s*\+\s*1\s*\)")
+_OFF_BY_ONE_WHILE_RE = re.compile(
+    r"while\s+([A-Za-z_]\w*)\s*<=\s*len\(\s*([A-Za-z_]\w*)\s*\)\s*:"
+)
+# Strategy 4: spurious str() coercion on a returned value (line-based match).
+_STR_RETURN_PREFIX = "return str("
 
 #: Stdlib modules the debugger is willing to auto-import (strategy 2).
 STDLIB_IMPORT_ALLOWLIST = frozenset({"math", "json", "re", "os", "sys", "statistics"})
@@ -152,6 +174,7 @@ class DebuggerAgent(Agent):
         report_text = _report_text(report)
         failing_tests = re.findall(r"FAILED\s+(\S+)", report_text)
 
+        require_capability(ctx, "READ_WORKSPACE")
         try:
             source = ctx.workspace.read(target_file)
         except Exception as exc:
@@ -165,10 +188,10 @@ class DebuggerAgent(Agent):
 
         strategy: str | None = None
         patched: str | None = None
+        lowered = report_text.lower()
 
         # Strategy 1: in-place sort returning None.
         sort_match = _INPLACE_SORT_RE.search(source)
-        lowered = report_text.lower()
         if sort_match and ("none" in lowered or "assert" in lowered):
             expr = sort_match.group(1)
             patched = (
@@ -192,7 +215,43 @@ class DebuggerAgent(Agent):
                     patched = f"import {missing}\n" + source
                     strategy = f"add-missing-import:{missing}"
 
+        # Strategy 3: off-by-one loop bound (IndexError in the report).
+        if strategy is None and "indexerror" in lowered:
+            range_match = _OFF_BY_ONE_RANGE_RE.search(source)
+            while_match = _OFF_BY_ONE_WHILE_RE.search(source)
+            if range_match:
+                seq = range_match.group(1)
+                patched = (
+                    source[: range_match.start()]
+                    + f"range(len({seq}))"
+                    + source[range_match.end() :]
+                )
+                strategy = "fix-off-by-one-range-bound"
+            elif while_match:
+                index_var, seq = while_match.group(1), while_match.group(2)
+                patched = (
+                    source[: while_match.start()]
+                    + f"while {index_var} < len({seq}):"
+                    + source[while_match.end() :]
+                )
+                strategy = "fix-off-by-one-while-bound"
+
+        # Strategy 4: spurious str() coercion on the return value.
+        if strategy is None and "assertionerror" in lowered:
+            lines = source.splitlines(keepends=True)
+            for i, line in enumerate(lines):
+                stripped = line.strip()
+                if stripped.startswith(_STR_RETURN_PREFIX) and stripped.endswith(")"):
+                    inner = stripped[len(_STR_RETURN_PREFIX) : -1]
+                    lines[i] = line.replace(
+                        f"{_STR_RETURN_PREFIX}{inner})", f"return {inner}", 1
+                    )
+                    patched = "".join(lines)
+                    strategy = "remove-spurious-str-coercion"
+                    break
+
         if strategy is not None and patched is not None:
+            require_capability(ctx, "WRITE_WORKSPACE")
             ctx.workspace.write(target_file, patched, author="debugger")
             _mem_set(ctx, f"repair:{target_file}", strategy)
             _mem_set(ctx, f"repair:{task_id}", strategy)
@@ -212,7 +271,7 @@ class DebuggerAgent(Agent):
                 message=f"debugger patched {target_file} via strategy '{strategy}'",
             )
 
-        # Strategy 3 (fallback): honest failure — let the scheduler retry/fail.
+        # Fallback: honest failure — let the scheduler retry/fail.
         _mem_set(ctx, "repair:requested", target_file)
         _audit(
             ctx,

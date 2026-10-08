@@ -2,17 +2,23 @@
 
 Rule-based and deterministic. It reads the research findings stored in
 working memory (written by the researcher agent under ``"research:findings"``)
-and produces a short, ordered outline — persisted both to working memory
-(``"plan:outline"``) and to the workspace as ``PLAN.md`` — so downstream
-agents and humans can see what will be executed. This is genuine,
-inspectable logic; it does not pretend to reason like an LLM.
+and produces a short, ordered outline plus a structured task list —
+persisted both to working memory (``"plan:outline"`` / ``"plan:tasks"``) and
+to the workspace as ``PLAN.md`` — so downstream agents and humans can see
+what will be executed. This is genuine, inspectable logic; it does not
+pretend to reason like an LLM.
+
+Permission gating: writing ``PLAN.md`` goes through
+:func:`casi.agents.base.require_capability` (``WRITE_WORKSPACE``) and fails
+closed with ``PermissionDenied`` when the context carries a role that lacks
+it.
 """
 
 from __future__ import annotations
 
 from typing import Any
 
-from casi.agents.base import Agent, AgentContext, AgentResult
+from casi.agents.base import Agent, AgentContext, AgentResult, require_capability
 
 
 def _mem_get(ctx: AgentContext, key: str, default: Any = None) -> Any:
@@ -61,26 +67,47 @@ class PlannerAgent(Agent):
     capabilities = ("plan",)
 
     def run(self, ctx: AgentContext) -> AgentResult:
-        """Build the outline from working-memory findings and persist it."""
+        """Build the outline and task list from working-memory findings."""
         params = getattr(ctx.task, "params", None) or {}
         goal_hint = params.get("goal_hint", "")
         findings = _mem_get(ctx, "research:findings", []) or []
 
-        lines = [f"# Execution outline", "", f"Goal: {goal_hint}", ""]
+        if findings:
+            tasks = [
+                {
+                    "order": i,
+                    "title": f"Act on finding {i}",
+                    "detail": str(finding),
+                }
+                for i, finding in enumerate(findings, 1)
+            ]
+        else:
+            tasks = [
+                {
+                    "order": 1,
+                    "title": "Clarify the goal",
+                    "detail": (
+                        "No research findings were recorded; confirm scope "
+                        "before executing."
+                    ),
+                }
+            ]
+
+        lines = ["# Execution outline", "", f"Goal: {goal_hint}", ""]
         if findings:
             lines.append("## Research findings")
             for i, finding in enumerate(findings, 1):
                 lines.append(f"{i}. {finding}")
             lines.append("")
-        lines.append("## Steps")
-        if findings:
-            for i, finding in enumerate(findings, 1):
-                lines.append(f"{i}. Act on: {finding}")
-        else:
-            lines.append("1. Proceed directly: no prior findings recorded.")
+        lines.append("## Task list")
+        for task in tasks:
+            lines.append(f"{task['order']}. {task['title']}: {task['detail']}")
         outline = "\n".join(lines) + "\n"
 
         _mem_set(ctx, "plan:outline", outline)
+        _mem_set(ctx, "plan:tasks", tasks)
+
+        require_capability(ctx, "WRITE_WORKSPACE")
         artifact = "PLAN.md"
         try:
             ctx.workspace.write(artifact, outline, author="planner")
@@ -88,10 +115,14 @@ class PlannerAgent(Agent):
         except Exception:
             artifacts = []
 
-        _audit(ctx, "agent.planner.outline", {"steps": len(findings), "artifact": artifact})
+        _audit(
+            ctx,
+            "agent.planner.outline",
+            {"steps": len(tasks), "artifact": artifact},
+        )
         return AgentResult(
             success=True,
-            output={"outline": outline, "steps": len(findings)},
+            output={"outline": outline, "steps": len(tasks), "tasks": tasks},
             artifacts=artifacts,
-            message=f"planner wrote outline with {len(findings)} step(s)",
+            message=f"planner wrote outline with {len(tasks)} task(s)",
         )

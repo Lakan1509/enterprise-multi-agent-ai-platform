@@ -14,7 +14,7 @@ import re
 import sys
 from typing import Any
 
-from casi.agents.base import Agent, AgentContext, AgentResult
+from casi.agents.base import Agent, AgentContext, AgentResult, require_capability
 
 _PASSED_RE = re.compile(r"(\d+)\s+passed")
 _FAILED_RE = re.compile(r"(\d+)\s+failed")
@@ -62,6 +62,7 @@ class TesterAgent(Agent):
         cwd: Any = params.get("work_dir") or getattr(ctx.workspace, "root", None) or "."
 
         cmd = [sys.executable, "-m", "pytest", test_file, "-q"]
+        require_capability(ctx, "EXECUTE_CODE")
         result = ctx.sandbox.run(cmd, cwd=cwd, timeout_s=timeout_s)
 
         combined = "\n".join(
@@ -77,6 +78,7 @@ class TesterAgent(Agent):
             "timed_out": bool(getattr(result, "timed_out", False)),
             "stdout_tail": (result.stdout or "")[-_STDOUT_TAIL_CHARS:],
         }
+        require_capability(ctx, "WRITE_WORKSPACE")
         ctx.workspace.write(REPORT_FILENAME, json.dumps(report, indent=2), author="tester")
 
         success = result.returncode == 0

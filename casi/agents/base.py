@@ -5,10 +5,13 @@ Defines the agent interface (``Agent``), the result/context dataclasses
 (``AgentRegistry``), and ``NoCapableAgent``.
 
 Decoupling note: this module does not import any sibling CASI component
-(workspace, memory, models, sandbox, audit, approvals). ``AgentContext``
-declares those fields as ``typing.Any`` so agents can run against the real
-components or lightweight test fakes. ``TaskSpec`` is referenced only under
-``TYPE_CHECKING`` because ``casi.planner`` may not exist yet.
+(workspace, memory, models, sandbox, audit, approvals) at module top level.
+``AgentContext`` declares those fields as ``typing.Any`` so agents can run
+against the real components or lightweight test fakes. ``TaskSpec`` is
+referenced only under ``TYPE_CHECKING`` because ``casi.planner`` may not
+exist yet. The one sanctioned cross-package call is
+:func:`require_capability`, which imports ``casi.security.permissions``
+*lazily* (inside the function) so import time stays decoupled.
 """
 
 from __future__ import annotations
@@ -62,6 +65,11 @@ class AgentContext:
     sandbox: Any  # casi.execution.sandbox.Sandbox
     audit: Any  # casi.security.audit.AuditLog
     approvals: Any  # casi.security.approvals.ApprovalGate
+    role: Any = None  # casi.security.permissions.Role of the principal
+    # running this agent. ``None`` means "no role wired" (legacy contexts,
+    # e.g. built before role wiring existed): such contexts are NOT gated by
+    # require_capability. Any explicit role — including unknown ones — fails
+    # closed via PermissionDenied.
 
 
 class Agent(abc.ABC):
@@ -106,3 +114,34 @@ class AgentRegistry:
     def list(self) -> list[Agent]:
         """Return all registered agents in registration order."""
         return list(self._agents.values())
+
+
+def require_capability(ctx: AgentContext, capability: Any) -> None:
+    """Enforce the role recorded on ``ctx`` holds ``capability``.
+
+    This is the single choke point through which every agent's
+    side-effecting action (workspace writes, code execution, workspace
+    reads/searches) must pass. It delegates to
+    :func:`casi.security.permissions.check`, imported lazily so this module
+    keeps no import-time coupling to ``casi.security``.
+
+    Args:
+        ctx: The agent context carrying the principal's ``role``.
+        capability: A ``casi.security.permissions.Capability`` member or its
+            string name (e.g. ``"EXECUTE_CODE"``).
+
+    Behavior:
+        - ``ctx.role is None`` (legacy context, role never wired): not gated,
+          returns silently. Production wiring must set roles (see kernel).
+        - Any explicit role: fails closed — :class:`PermissionDenied` is
+          raised when the role lacks the capability or is unknown.
+
+    Raises:
+        PermissionDenied: If the explicit role lacks the capability.
+    """
+    role = getattr(ctx, "role", None)
+    if role is None:
+        return
+    from casi.security.permissions import Capability, check
+
+    check(role, Capability(capability))

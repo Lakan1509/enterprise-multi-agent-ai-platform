@@ -16,6 +16,11 @@ Repair mode is entered when ``ctx.task.params["attempt"] == "repair"`` or
 the working-memory key ``f"repair:{task.id}"`` is set; in that mode the
 correct implementation (``return sorted(lst)`` with a ``TypeError`` guard)
 is emitted.
+
+Permission gating: the workspace write goes through
+:func:`casi.agents.base.require_capability` (``WRITE_WORKSPACE``) and fails
+closed with ``PermissionDenied`` when the context carries a role that lacks
+it.
 """
 
 from __future__ import annotations
@@ -23,7 +28,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from casi.agents.base import Agent, AgentContext, AgentResult
+from casi.agents.base import Agent, AgentContext, AgentResult, require_capability
 
 
 def _task_params(task: Any) -> dict:
@@ -203,7 +208,7 @@ class CoderAgent(Agent):
             return None
         text = getattr(completion, "text", None)
         if isinstance(text, str) and "def " in text:
-            return text
+            return _strip_code_fences(text)
         return None
 
     # ------------------------------------------------------------------
@@ -260,6 +265,7 @@ class CoderAgent(Agent):
                 error=f"unknown kind {kind!r}",
             )
 
+        require_capability(ctx, "WRITE_WORKSPACE")
         ctx.workspace.write(written_file, code, author="coder")
         _mem_set(ctx, f"code:{written_file}", "written")
         _audit(
@@ -278,3 +284,22 @@ class CoderAgent(Agent):
             artifacts=[written_file],
             message=f"coder wrote {kind} artifact to {written_file}",
         )
+
+
+def _strip_code_fences(text: str) -> str:
+    """Remove Markdown code fences from model output, if present.
+
+    Real LLMs habitually wrap code in ```python ... ``` even when asked not
+    to; writing the fences verbatim would produce a SyntaxError artifact.
+    Only strips a single leading/trailing fence pair.
+    """
+    stripped = text.strip()
+    if stripped.startswith("```"):
+        lines = stripped.splitlines()
+        # Drop the opening fence (``` or ```python) ...
+        lines = lines[1:]
+        # ... and the closing fence, if present.
+        if lines and lines[-1].strip() == "```":
+            lines = lines[:-1]
+        return "\n".join(lines).strip() + "\n"
+    return text

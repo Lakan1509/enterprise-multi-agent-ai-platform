@@ -18,7 +18,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from casi.agents.base import Agent, AgentContext, AgentResult
+from casi.agents.base import Agent, AgentContext, AgentResult, require_capability
 
 
 def _task_params(task: Any) -> dict:
@@ -57,6 +57,9 @@ class ReviewerAgent(Agent):
 
         checks: dict[str, dict[str, Any]] = {}
         all_passed = True
+
+        if files:
+            require_capability(ctx, "READ_WORKSPACE")
 
         for relpath in files:
             entry: dict[str, Any] = {

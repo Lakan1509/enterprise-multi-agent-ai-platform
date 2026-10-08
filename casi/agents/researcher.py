@@ -3,14 +3,21 @@
 No web access — this agent only consults ``ctx.workspace.search(query)``
 and ``ctx.memory.longterm.recall(query)``, both guarded so the agent still
 works when a fake component lacks one of them. Findings are stored in
-working memory and returned in ``output["findings"]``.
+working memory under ``f"research:{task.id}"`` and aggregated under
+``"research:findings"`` (the key the planner agent reads), and returned in
+``output["findings"]``.
+
+Permission gating: the workspace search goes through
+:func:`casi.agents.base.require_capability` (``READ_WORKSPACE``) and fails
+closed with ``PermissionDenied`` when the context carries a role that lacks
+it.
 """
 
 from __future__ import annotations
 
 from typing import Any
 
-from casi.agents.base import Agent, AgentContext, AgentResult
+from casi.agents.base import Agent, AgentContext, AgentResult, require_capability
 
 
 def _task_params(task: Any) -> dict:
@@ -34,6 +41,32 @@ def _item_field(item: Any, *names: str) -> Any:
         if value is not None:
             return value
     return None
+
+
+def _mem_get(ctx: AgentContext, key: str, default: Any = None) -> Any:
+    """Best-effort working-memory read. Never raises."""
+    mem = getattr(ctx, "memory", None)
+    if mem is None:
+        return default
+    working = getattr(mem, "working", None)
+    getter = getattr(working, "get", None) if working is not None else None
+    if callable(getter):
+        try:
+            return getter(ctx.goal_id, key, default)
+        except Exception:
+            pass
+    getter = getattr(mem, "get", None)
+    if callable(getter):
+        try:
+            return getter(ctx.goal_id, key, default)
+        except TypeError:
+            try:
+                return getter(key, default)
+            except Exception:
+                pass
+        except Exception:
+            pass
+    return default
 
 
 def _mem_set(ctx: AgentContext, key: str, value: Any) -> None:
@@ -78,6 +111,7 @@ class ResearcherAgent(Agent):
 
         search = getattr(ctx.workspace, "search", None)
         if callable(search):
+            require_capability(ctx, "READ_WORKSPACE")
             try:
                 for item in search(query) or []:
                     findings.append(
@@ -108,6 +142,10 @@ class ResearcherAgent(Agent):
                 pass
 
         _mem_set(ctx, f"research:{_task_id(ctx.task)}", findings)
+        # Aggregate key the planner agent reads; accumulate so multiple
+        # research tasks in one goal do not clobber each other.
+        prior = _mem_get(ctx, "research:findings", []) or []
+        _mem_set(ctx, "research:findings", list(prior) + findings)
 
         return AgentResult(
             success=True,
