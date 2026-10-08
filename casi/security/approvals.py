@@ -12,10 +12,15 @@ from __future__ import annotations
 import threading
 import time
 import uuid
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
+from typing import Any
 
 from .permissions import PermissionDenied
+
+#: Signature of the optional audit hook: ``hook(event_name, details_dict)``.
+AuditHook = Callable[[str, dict[str, Any]], None]
 
 
 class ApprovalNotFound(Exception):
@@ -40,11 +45,27 @@ class Approval:
 
 
 class ApprovalGate:
-    """Thread-safe in-memory approval gate."""
+    """Thread-safe in-memory approval gate.
 
-    def __init__(self) -> None:
+    Args:
+        audit_hook: Optional callable ``(event, details)`` invoked for
+            ``approval.requested`` / ``approval.resolved`` events so the
+            kernel's audit log sees every gate transition. May be ``None``.
+    """
+
+    def __init__(self, audit_hook: AuditHook | None = None) -> None:
         self._cond = threading.Condition()
         self._approvals: dict[str, Approval] = {}
+        self._audit_hook = audit_hook
+
+    def _emit(self, event: str, details: dict[str, Any]) -> None:
+        """Fire the audit hook; hook failures must never break the gate."""
+        if self._audit_hook is None:
+            return
+        try:
+            self._audit_hook(event, details)
+        except Exception:  # noqa: BLE001 - auditing is best-effort
+            pass
 
     def request(self, action: str, details: dict) -> Approval:
         """Create a pending approval for ``action`` and return it."""
@@ -52,6 +73,14 @@ class ApprovalGate:
         with self._cond:
             self._approvals[approval.id] = approval
             self._cond.notify_all()
+        self._emit(
+            "approval.requested",
+            {
+                "approval_id": approval.id,
+                "action": action,
+                **({"goal_id": details["goal_id"]} if "goal_id" in details else {}),
+            },
+        )
         return approval
 
     def resolve(self, approval_id: str, approved: bool, note: str = "") -> Approval:
@@ -71,7 +100,16 @@ class ApprovalGate:
             approval.resolved_at = datetime.now(timezone.utc).isoformat()
             approval.note = note
             self._cond.notify_all()
-            return approval
+            event_details = {
+                "approval_id": approval.id,
+                "action": approval.action,
+                "status": approval.status,
+                "note": note,
+            }
+            if "goal_id" in approval.details:
+                event_details["goal_id"] = approval.details["goal_id"]
+        self._emit("approval.resolved", event_details)
+        return approval
 
     def get(self, approval_id: str) -> Approval:
         """Return the approval with ``approval_id``.
