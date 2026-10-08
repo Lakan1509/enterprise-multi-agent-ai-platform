@@ -29,6 +29,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from casi.config import Settings
 from casi.kernel import AIKernel
+from casi.security.permissions import Role
 
 GOAL_TEXT = (
     "Write a Python function `sort_list` that sorts a list of numbers "
@@ -44,6 +45,12 @@ def main() -> int:
     settings = Settings(data_dir=data_dir)
     kernel = AIKernel(settings)
 
+    # The demo acts as the human operator with full privileges. auto_approve
+    # is passed explicitly here (never a config default) together with the
+    # ADMIN role, so it flows through the kernel's capability-checked
+    # auto-approve path (requires APPROVE_OWN_RUNS) and is audit-logged.
+    demo_role = Role.ADMIN
+
     goal = kernel.create_goal(GOAL_TEXT, requester="milestone-demo")
     print(f"[demo] goal created: {goal.id}")
 
@@ -52,7 +59,9 @@ def main() -> int:
 
     def _run() -> None:
         try:
-            result["goal"] = kernel.run_goal(goal.id, auto_approve=False)
+            result["goal"] = kernel.run_goal(
+                goal.id, auto_approve=auto_approve, role=demo_role
+            )
         except Exception as exc:  # noqa: BLE001 — demo must report, not crash
             result["error"] = exc
 
