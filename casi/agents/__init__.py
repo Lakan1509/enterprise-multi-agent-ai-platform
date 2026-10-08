@@ -17,6 +17,7 @@ from casi.agents.base import (
 )
 from casi.agents.coder import CoderAgent
 from casi.agents.debugger import DebuggerAgent
+from casi.agents.planner_agent import PlannerAgent
 from casi.agents.researcher import ResearcherAgent
 from casi.agents.reviewer import ReviewerAgent
 from casi.agents.supervisor import SupervisorAgent
@@ -30,6 +31,7 @@ __all__ = [
     "NoCapableAgent",
     "CoderAgent",
     "DebuggerAgent",
+    "PlannerAgent",
     "ResearcherAgent",
     "ReviewerAgent",
     "SupervisorAgent",
